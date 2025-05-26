@@ -4,6 +4,8 @@ Fenêtre principale de l'application Google Drive Explorer
 
 import os
 import shutil
+import subprocess
+import sys
 from typing import List, Dict, Any, Optional
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QFileDialog, QMessageBox,
@@ -78,13 +80,16 @@ class DriveExplorerMainWindow(QMainWindow):
         try:
             self.drive_client = GoogleDriveClient()
             self.connected = True
+            print("✅ Connexion à Google Drive réussie")
         except Exception as e:
             self.connected = False
-            ErrorDialog.show_error(
-                "❌ Erreur de connexion",
-                f"Impossible de se connecter à Google Drive: {str(e)}",
-                parent=self
-            )
+            print(f"❌ Erreur de connexion à Google Drive: {e}")
+            # Ne pas afficher d'erreur au démarrage, juste logger
+            # ErrorDialog.show_error(
+            #     "❌ Erreur de connexion",
+            #     f"Impossible de se connecter à Google Drive: {str(e)}",
+            #     parent=self
+            # )
 
     def setup_ui(self) -> None:
         """Configure l'interface utilisateur avec style moderne"""
@@ -170,8 +175,11 @@ class DriveExplorerMainWindow(QMainWindow):
 
         # Ajouter les Shared Drives si connecté
         if self.connected:
-            for drive in self.drive_client.list_shared_drives():
-                self.drive_selector.addItem(f"🏢 {drive['name']}", drive['id'])
+            try:
+                for drive in self.drive_client.list_shared_drives():
+                    self.drive_selector.addItem(f"🏢 {drive['name']}", drive['id'])
+            except Exception as e:
+                print(f"Erreur lors du chargement des Shared Drives: {e}")
 
         self.drive_selector.currentIndexChanged.connect(self.change_drive)
         drive_selector_layout.addWidget(self.drive_selector)
@@ -288,7 +296,8 @@ class DriveExplorerMainWindow(QMainWindow):
         self.disconnect_action.setEnabled(self.connected)
         self.reconnect_action.setEnabled(not self.connected)
 
-    # Méthodes de gestion des fichiers locaux
+    # ==================== GESTION DES FICHIERS LOCAUX ====================
+
     def refresh_local_files(self, path: Optional[str] = None) -> None:
         """Actualise la liste des fichiers locaux avec cache"""
         target_path = path if path is not None else self.local_path_edit.text()
@@ -355,7 +364,8 @@ class DriveExplorerMainWindow(QMainWindow):
             status_item = QStandardItem("📋 Cache" if from_cache else "✅ Frais")
             self.local_model.appendRow([name_item, size_item, date_item, type_item, status_item])
 
-    # Méthodes de gestion de Google Drive
+    # ==================== GESTION DE GOOGLE DRIVE ====================
+
     def refresh_drive_files(self, folder_id: Optional[str] = None) -> None:
         """Actualise la liste des fichiers Google Drive avec cache"""
         if not self.connected:
@@ -418,23 +428,26 @@ class DriveExplorerMainWindow(QMainWindow):
                 size_item = QStandardItem("")
                 date_item = QStandardItem("")
                 type_item = QStandardItem("📂 Dossier parent")
+                id_item = QStandardItem(file_info.get('id', ''))
             elif file_info['is_dir']:
                 name_item = QStandardItem(f"📁 {file_info['name']}")
                 size_item = QStandardItem("")
                 type_item = QStandardItem("📂 Dossier")
+                id_item = QStandardItem(file_info.get('id', ''))
             else:
-                emoji = get_file_emoji(file_info['mimeType'])
+                emoji = get_file_emoji(file_info.get('mimeType', ''))
                 name_item = QStandardItem(f"{emoji} {file_info['name']}")
-                size_item = QStandardItem(format_file_size(file_info['size']))
-                type_item = QStandardItem(get_file_type_description(file_info['mimeType']))
+                size_item = QStandardItem(format_file_size(file_info.get('size', 0)))
+                type_item = QStandardItem(get_file_type_description(file_info.get('mimeType', '')))
+                id_item = QStandardItem(file_info.get('id', ''))
 
-            date_item = QStandardItem(format_date(file_info['modified']))
-            id_item = QStandardItem(file_info['id'])
+            date_item = QStandardItem(format_date(file_info.get('modified', '')))
             status_item = QStandardItem("📋 Cache" if from_cache else "✅ Frais")
 
             self.drive_model.appendRow([name_item, size_item, date_item, type_item, id_item, status_item])
 
-    # Actions de la barre d'outils
+    # ==================== ACTIONS DE LA BARRE D'OUTILS ====================
+
     def refresh_all(self) -> None:
         """Actualise les fichiers locaux et Google Drive"""
         self.refresh_local_files()
@@ -551,13 +564,669 @@ class DriveExplorerMainWindow(QMainWindow):
 
         self.status_bar.showMessage(f"🔍 {len(results)} résultat(s) pour '{query}'", 5000)
 
-    # Navigation
+    # ==================== MENUS CONTEXTUELS ====================
+
+    def show_local_context_menu(self, position):
+        """Affiche un menu contextuel stylé pour les actions sur les fichiers locaux"""
+        try:
+            indexes = self.local_view.selectedIndexes()
+            if not indexes:
+                return
+
+            rows = set(index.row() for index in indexes)
+            if not rows:
+                return
+
+            menu = QMenu(self)
+
+            if rows:
+                upload_action = QAction("⬆️ Uploader vers Google Drive", self)
+                upload_action.triggered.connect(self.upload_selected_files)
+                upload_action.setEnabled(self.connected)
+                menu.addAction(upload_action)
+                menu.addSeparator()
+
+            if len(rows) == 1:
+                row = list(rows)[0]
+                # Vérification de sécurité
+                if row < self.local_model.rowCount() and self.local_model.item(row, 0):
+                    name = self.local_model.item(row, 0).text()
+                    clean_name = name.replace("📁 ", "").replace("📄 ", "")
+                    if clean_name != "..":
+                        rename_action = QAction("✏️ Renommer", self)
+                        rename_action.triggered.connect(self.rename_selected)
+                        menu.addAction(rename_action)
+
+                        delete_action = QAction("🗑️ Supprimer", self)
+                        delete_action.triggered.connect(self.delete_selected)
+                        menu.addAction(delete_action)
+
+                        menu.addSeparator()
+
+                        # Actions supplémentaires
+                        if os.path.isdir(os.path.join(self.local_model.current_path, clean_name)):
+                            open_action = QAction("📂 Ouvrir dans l'Explorateur", self)
+                            open_action.triggered.connect(lambda: self.open_in_explorer(clean_name))
+                            menu.addAction(open_action)
+                        else:
+                            open_action = QAction("📄 Ouvrir le fichier", self)
+                            open_action.triggered.connect(lambda: self.open_file(clean_name))
+                            menu.addAction(open_action)
+
+                        # Propriétés
+                        properties_action = QAction("ℹ️ Propriétés", self)
+                        properties_action.triggered.connect(self.show_local_file_properties)
+                        menu.addAction(properties_action)
+
+            menu.exec_(self.local_view.viewport().mapToGlobal(position))
+
+        except Exception as e:
+            print(f"Erreur dans show_local_context_menu: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Erreur dans le menu contextuel: {str(e)}", parent=self)
+
+    def show_drive_context_menu(self, position):
+        """Affiche un menu contextuel stylé pour les actions sur les fichiers Google Drive"""
+        try:
+            if not self.connected:
+                return
+
+            indexes = self.drive_view.selectedIndexes()
+            if not indexes:
+                return
+
+            rows = set(index.row() for index in indexes)
+            if not rows:
+                return
+
+            menu = QMenu(self)
+
+            if rows:
+                download_action = QAction("⬇️ Télécharger", self)
+                download_action.triggered.connect(self.download_selected_files)
+                menu.addAction(download_action)
+                menu.addSeparator()
+
+            if len(rows) == 1:
+                row = list(rows)[0]
+
+                # Vérifications de sécurité
+                if row >= self.drive_model.rowCount():
+                    return
+
+                # Vérifier que les éléments existent
+                name_item = self.drive_model.item(row, 0)
+                type_item = self.drive_model.item(row, 3)
+                id_item = self.drive_model.item(row, 4)
+
+                if not name_item or not type_item:
+                    return
+
+                name = name_item.text()
+                clean_name = name.split(" ", 1)[1] if " " in name else name
+                file_type = type_item.text()
+                file_id = id_item.text() if id_item else ""
+
+                if clean_name != ".." and "Retour à la navigation" not in clean_name:
+                    rename_action = QAction("✏️ Renommer", self)
+                    rename_action.triggered.connect(self.rename_selected)
+                    menu.addAction(rename_action)
+
+                    if "📂 Dossier" in file_type:
+                        create_subfolder_action = QAction("📁 Créer un sous-dossier", self)
+                        create_subfolder_action.triggered.connect(self.create_subfolder_selected)
+                        menu.addAction(create_subfolder_action)
+
+                    menu.addSeparator()
+
+                    delete_action = QAction("🗑️ Mettre à la corbeille", self)
+                    delete_action.triggered.connect(self.delete_selected)
+                    menu.addAction(delete_action)
+
+                    perm_delete_action = QAction("💥 Supprimer définitivement", self)
+                    perm_delete_action.triggered.connect(self.permanently_delete_selected)
+                    menu.addAction(perm_delete_action)
+
+                    menu.addSeparator()
+
+                    # Actions supplémentaires
+                    share_action = QAction("🔗 Partager", self)
+                    share_action.triggered.connect(self.share_selected_file)
+                    menu.addAction(share_action)
+
+                    details_action = QAction("ℹ️ Propriétés", self)
+                    details_action.triggered.connect(self.show_file_details)
+                    menu.addAction(details_action)
+
+            menu.exec_(self.drive_view.viewport().mapToGlobal(position))
+
+        except Exception as e:
+            print(f"Erreur dans show_drive_context_menu: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Erreur dans le menu contextuel Google Drive: {str(e)}", parent=self)
+
+    # ==================== ACTIONS SUR LES FICHIERS ====================
+
+    def upload_selected_files(self):
+        """Upload les fichiers et dossiers sélectionnés vers Google Drive"""
+        try:
+            if not self.connected:
+                ErrorDialog.show_error("❌ Non connecté",
+                                       "Vous devez être connecté à Google Drive pour uploader des fichiers.",
+                                       parent=self)
+                return
+
+            indexes = self.local_view.selectedIndexes()
+            if not indexes:
+                return
+
+            rows_names = set((index.row(), self.local_model.item(index.row(), 0).text())
+                             for index in indexes if index.column() == 0 and self.local_model.item(index.row(), 0))
+            items_to_upload = [(row, name.replace("📁 ", "").replace("📄 ", ""))
+                               for row, name in rows_names if ".." not in name]
+
+            if not items_to_upload:
+                return
+
+            destination_id = self.drive_model.current_path_id
+            is_shared_drive = self.drive_client.is_shared_drive(self.drive_model.current_drive_id)
+
+            for row, name in items_to_upload:
+                item_path = os.path.join(self.local_model.current_path, name)
+
+                if os.path.isfile(item_path):
+                    upload_thread = UploadThread(self.drive_client, item_path, destination_id, is_shared_drive)
+                    upload_thread.progress_signal.connect(self.update_progress)
+                    upload_thread.completed_signal.connect(self.upload_completed)
+                    upload_thread.error_signal.connect(self.upload_error)
+                    upload_thread.status_signal.connect(self.update_status)
+                    upload_thread.time_signal.connect(self.update_upload_time)
+                    self.upload_threads.append(upload_thread)
+                    upload_thread.start()
+
+                elif os.path.isdir(item_path):
+                    folder_upload_thread = FolderUploadThread(self.drive_client, item_path, destination_id, is_shared_drive)
+                    folder_upload_thread.progress_signal.connect(self.update_progress)
+                    folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
+                    folder_upload_thread.error_signal.connect(self.upload_error)
+                    folder_upload_thread.status_signal.connect(self.update_status)
+                    folder_upload_thread.time_signal.connect(self.update_upload_time)
+                    self.folder_upload_threads.append(folder_upload_thread)
+                    folder_upload_thread.start()
+
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(True)
+
+        except Exception as e:
+            print(f"Erreur dans upload_selected_files: {e}")
+            ErrorDialog.show_error("❌ Erreur d'upload", f"Erreur lors de l'upload: {str(e)}", parent=self)
+
+    def download_selected_files(self):
+        """Télécharge les fichiers sélectionnés depuis Google Drive"""
+        try:
+            indexes = self.drive_view.selectedIndexes()
+            if not indexes:
+                return
+
+            rows_info = []
+            for index in indexes:
+                if index.column() == 0:
+                    row = index.row()
+                    if row < self.drive_model.rowCount():
+                        name_item = self.drive_model.item(row, 0)
+                        type_item = self.drive_model.item(row, 3)
+                        id_item = self.drive_model.item(row, 4)
+
+                        if name_item and type_item and id_item:
+                            rows_info.append((row, name_item.text(), type_item.text(), id_item.text()))
+
+            files_to_download = [(row, name.split(" ", 1)[1] if " " in name else name, file_id)
+                                 for row, name, file_type, file_id in rows_info
+                                 if ".." not in name and "📂 Dossier" not in file_type and "Retour à la navigation" not in name]
+
+            if not files_to_download:
+                return
+
+            destination_dir = QFileDialog.getExistingDirectory(
+                self, "📁 Choisir le dossier de destination", self.local_model.current_path)
+
+            if not destination_dir:
+                return
+
+            for row, name, file_id in files_to_download:
+                download_thread = DownloadThread(self.drive_client, file_id, name, destination_dir)
+                download_thread.progress_signal.connect(self.update_progress)
+                download_thread.completed_signal.connect(self.download_completed)
+                download_thread.error_signal.connect(self.download_error)
+                download_thread.time_signal.connect(self.update_download_time)
+                self.download_threads.append(download_thread)
+                download_thread.start()
+
+                self.progress_bar.setValue(0)
+                self.progress_bar.setVisible(True)
+                self.status_bar.showMessage(f"⬇️ Téléchargement de {name}...")
+
+        except Exception as e:
+            print(f"Erreur dans download_selected_files: {e}")
+            ErrorDialog.show_error("❌ Erreur de téléchargement", f"Erreur lors du téléchargement: {str(e)}", parent=self)
+
+    def rename_selected(self):
+        """Renomme l'élément sélectionné"""
+        try:
+            focused_widget = QApplication.focusWidget()
+
+            if focused_widget == self.local_view or self.local_view.hasFocus():
+                indexes = self.local_view.selectedIndexes()
+                if not indexes:
+                    return
+
+                row = indexes[0].row()
+                if row >= self.local_model.rowCount() or not self.local_model.item(row, 0):
+                    return
+
+                old_name = self.local_model.item(row, 0).text().replace("📁 ", "").replace("📄 ", "")
+
+                if old_name == "..":
+                    return
+
+                dialog = RenameDialog(old_name, self)
+                if dialog.exec_() == dialog.Accepted:
+                    new_name = dialog.get_new_name()
+                    if new_name and new_name != old_name:
+                        old_path = os.path.join(self.local_model.current_path, old_name)
+                        new_path = os.path.join(self.local_model.current_path, new_name)
+
+                        try:
+                            os.rename(old_path, new_path)
+                            self.cache_manager.invalidate_local_cache(self.local_model.current_path)
+                            self.refresh_local_files()
+                            self.status_bar.showMessage(f"✅ '{old_name}' renommé en '{new_name}'", 3000)
+                        except Exception as e:
+                            ErrorDialog.show_error("❌ Erreur", f"Impossible de renommer: {str(e)}", parent=self)
+
+            elif focused_widget == self.drive_view or self.drive_view.hasFocus():
+                if not self.connected:
+                    return
+
+                indexes = self.drive_view.selectedIndexes()
+                if not indexes:
+                    return
+
+                row = indexes[0].row()
+                if row >= self.drive_model.rowCount():
+                    return
+
+                name_item = self.drive_model.item(row, 0)
+                id_item = self.drive_model.item(row, 4)
+
+                if not name_item or not id_item:
+                    return
+
+                old_name = name_item.text()
+                clean_old_name = old_name.split(" ", 1)[1] if " " in old_name else old_name
+                file_id = id_item.text()
+
+                if clean_old_name == ".." or "Retour à la navigation" in clean_old_name:
+                    return
+
+                dialog = RenameDialog(clean_old_name, self)
+                if dialog.exec_() == dialog.Accepted:
+                    new_name = dialog.get_new_name()
+                    if new_name and new_name != clean_old_name:
+                        try:
+                            self.drive_client.rename_item(file_id, new_name)
+                            self.cache_manager.invalidate_drive_cache(self.drive_model.current_path_id)
+                            self.refresh_drive_files()
+                            self.status_bar.showMessage(f"✅ '{clean_old_name}' renommé en '{new_name}'", 3000)
+                        except Exception as e:
+                            ErrorDialog.show_error("❌ Erreur", f"Impossible de renommer: {str(e)}", parent=self)
+
+        except Exception as e:
+            print(f"Erreur dans rename_selected: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Erreur lors du renommage: {str(e)}", parent=self)
+
+    def delete_selected(self):
+        """Supprime l'élément sélectionné"""
+        try:
+            focused_widget = QApplication.focusWidget()
+
+            if focused_widget == self.local_view or self.local_view.hasFocus():
+                indexes = self.local_view.selectedIndexes()
+                if not indexes:
+                    return
+
+                rows_names = set((index.row(), self.local_model.item(index.row(), 0).text())
+                                 for index in indexes if index.column() == 0 and self.local_model.item(index.row(), 0))
+                items_to_delete = [(row, name.replace("📁 ", "").replace("📄 ", ""))
+                                   for row, name in rows_names if ".." not in name]
+
+                if not items_to_delete:
+                    return
+
+                item_count = len(items_to_delete)
+                if item_count == 1:
+                    message = f"🗑️ Voulez-vous vraiment supprimer '{items_to_delete[0][1]}'?"
+                else:
+                    message = f"🗑️ Voulez-vous vraiment supprimer ces {item_count} éléments?"
+
+                if ConfirmationDialog.ask_confirmation("🗑️ Confirmation", message, self):
+                    errors = []
+                    for row, name in items_to_delete:
+                        path = os.path.join(self.local_model.current_path, name)
+                        try:
+                            if os.path.isdir(path):
+                                shutil.rmtree(path)
+                            else:
+                                os.remove(path)
+                        except Exception as e:
+                            errors.append(f"Impossible de supprimer '{name}': {str(e)}")
+
+                    self.cache_manager.invalidate_local_cache(self.local_model.current_path)
+                    self.refresh_local_files()
+
+                    if errors:
+                        ErrorDialog.show_error("❌ Erreurs de suppression", "\n".join(errors), parent=self)
+                    else:
+                        self.status_bar.showMessage(f"✅ {item_count} élément(s) supprimé(s)", 3000)
+
+            elif focused_widget == self.drive_view or self.drive_view.hasFocus():
+                if not self.connected:
+                    return
+
+                indexes = self.drive_view.selectedIndexes()
+                if not indexes:
+                    return
+
+                rows_info = []
+                for index in indexes:
+                    if index.column() == 0:
+                        row = index.row()
+                        if row < self.drive_model.rowCount():
+                            name_item = self.drive_model.item(row, 0)
+                            id_item = self.drive_model.item(row, 4)
+                            if name_item and id_item:
+                                rows_info.append((row, name_item.text(), id_item.text()))
+
+                items_to_delete = [(row, name.split(" ", 1)[1] if " " in name else name, file_id)
+                                   for row, name, file_id in rows_info
+                                   if ".." not in name and "Retour à la navigation" not in name]
+
+                if not items_to_delete:
+                    return
+
+                item_count = len(items_to_delete)
+                if item_count == 1:
+                    message = f"🗑️ Voulez-vous vraiment mettre '{items_to_delete[0][1]}' à la corbeille?"
+                else:
+                    message = f"🗑️ Voulez-vous vraiment mettre ces {item_count} éléments à la corbeille?"
+
+                if ConfirmationDialog.ask_confirmation("🗑️ Confirmation", message, self):
+                    errors = []
+                    for row, name, file_id in items_to_delete:
+                        try:
+                            self.drive_client.delete_item(file_id)
+                        except Exception as e:
+                            errors.append(f"Impossible de supprimer '{name}': {str(e)}")
+
+                    self.cache_manager.invalidate_drive_cache(self.drive_model.current_path_id)
+                    self.refresh_drive_files()
+
+                    if errors:
+                        ErrorDialog.show_error("❌ Erreurs de suppression", "\n".join(errors), parent=self)
+                    else:
+                        self.status_bar.showMessage(f"✅ {item_count} élément(s) mis à la corbeille", 3000)
+
+        except Exception as e:
+            print(f"Erreur dans delete_selected: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Erreur lors de la suppression: {str(e)}", parent=self)
+
+    def permanently_delete_selected(self):
+        """Supprime définitivement l'élément sélectionné de Google Drive"""
+        try:
+            if not self.connected:
+                return
+
+            indexes = self.drive_view.selectedIndexes()
+            if not indexes:
+                return
+
+            rows_info = []
+            for index in indexes:
+                if index.column() == 0:
+                    row = index.row()
+                    if row < self.drive_model.rowCount():
+                        name_item = self.drive_model.item(row, 0)
+                        id_item = self.drive_model.item(row, 4)
+                        if name_item and id_item:
+                            rows_info.append((row, name_item.text(), id_item.text()))
+
+            items_to_delete = [(row, name.split(" ", 1)[1] if " " in name else name, file_id)
+                               for row, name, file_id in rows_info
+                               if ".." not in name and "Retour à la navigation" not in name]
+
+            if not items_to_delete:
+                return
+
+            item_count = len(items_to_delete)
+            if item_count == 1:
+                message = (f"⚠️ ATTENTION: Voulez-vous vraiment supprimer définitivement '{items_to_delete[0][1]}'?\n\n"
+                           "Cette action est irréversible et ne peut pas être annulée.")
+            else:
+                message = (f"⚠️ ATTENTION: Voulez-vous vraiment supprimer définitivement ces {item_count} éléments?\n\n"
+                           "Cette action est irréversible et ne peut pas être annulée.")
+
+            if ConfirmationDialog.ask_confirmation("💥 Suppression définitive", message, self):
+                errors = []
+                for row, name, file_id in items_to_delete:
+                    try:
+                        self.drive_client.permanently_delete_item(file_id)
+                    except Exception as e:
+                        errors.append(f"Impossible de supprimer définitivement '{name}': {str(e)}")
+
+                self.cache_manager.invalidate_drive_cache(self.drive_model.current_path_id)
+                self.refresh_drive_files()
+
+                if errors:
+                    ErrorDialog.show_error("❌ Erreurs de suppression", "\n".join(errors), parent=self)
+                else:
+                    self.status_bar.showMessage(f"💥 {item_count} élément(s) définitivement supprimé(s)", 3000)
+
+        except Exception as e:
+            print(f"Erreur dans permanently_delete_selected: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Erreur lors de la suppression définitive: {str(e)}", parent=self)
+
+    def create_subfolder_selected(self):
+        """Crée un sous-dossier dans le dossier sélectionné"""
+        try:
+            if not self.connected:
+                return
+
+            indexes = self.drive_view.selectedIndexes()
+            if not indexes:
+                return
+
+            row = indexes[0].row()
+            if row >= self.drive_model.rowCount():
+                return
+
+            name_item = self.drive_model.item(row, 0)
+            type_item = self.drive_model.item(row, 3)
+            id_item = self.drive_model.item(row, 4)
+
+            if not name_item or not type_item or not id_item:
+                return
+
+            folder_id = id_item.text()
+            folder_name = name_item.text().split(" ", 1)[1] if " " in name_item.text() else name_item.text()
+            folder_type = type_item.text()
+
+            if ".." in folder_name or "📂 Dossier" not in folder_type:
+                return
+
+            dialog = CreateFolderDialog(self, f"📁 Nouveau sous-dossier dans '{folder_name}'")
+            if dialog.exec_() == dialog.Accepted:
+                subfolder_name = dialog.get_folder_name()
+                if subfolder_name:
+                    try:
+                        is_shared_drive = self.drive_client.is_shared_drive(self.drive_model.current_drive_id)
+                        subfolder_id = self.drive_client.create_folder(subfolder_name, folder_id, is_shared_drive)
+                        self.cache_manager.invalidate_drive_cache(folder_id)
+                        self.refresh_drive_files()
+                        self.status_bar.showMessage(f"✅ Sous-dossier '{subfolder_name}' créé", 3000)
+                    except Exception as e:
+                        ErrorDialog.show_error("❌ Erreur", f"Impossible de créer le sous-dossier: {str(e)}", parent=self)
+
+        except Exception as e:
+            print(f"Erreur dans create_subfolder_selected: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Erreur lors de la création du sous-dossier: {str(e)}", parent=self)
+
+    def show_file_details(self):
+        """Affiche les détails d'un fichier Google Drive"""
+        try:
+            if not self.connected:
+                return
+
+            indexes = self.drive_view.selectedIndexes()
+            if not indexes:
+                return
+
+            row = indexes[0].row()
+            if row >= self.drive_model.rowCount():
+                return
+
+            name_item = self.drive_model.item(row, 0)
+            id_item = self.drive_model.item(row, 4)
+
+            if not name_item or not id_item:
+                return
+
+            name = name_item.text()
+            clean_name = name.split(" ", 1)[1] if " " in name else name
+            file_id = id_item.text()
+
+            if clean_name == ".." or "Retour à la navigation" in clean_name:
+                return
+
+            metadata = self.drive_client.get_file_metadata(file_id)
+            dialog = FileDetailsDialog(metadata, self)
+            dialog.exec_()
+
+        except Exception as e:
+            print(f"Erreur dans show_file_details: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Impossible d'obtenir les détails: {str(e)}", parent=self)
+
+    def show_local_file_properties(self):
+        """Affiche les propriétés d'un fichier local"""
+        try:
+            indexes = self.local_view.selectedIndexes()
+            if not indexes:
+                return
+
+            row = indexes[0].row()
+            if row >= self.local_model.rowCount() or not self.local_model.item(row, 0):
+                return
+
+            name = self.local_model.item(row, 0).text()
+            clean_name = name.replace("📁 ", "").replace("📄 ", "")
+
+            if clean_name == "..":
+                return
+
+            file_path = os.path.join(self.local_model.current_path, clean_name)
+
+            if os.path.exists(file_path):
+                stats = os.stat(file_path)
+
+                # Créer un dictionnaire de métadonnées similaire à Google Drive
+                metadata = {
+                    'name': clean_name,
+                    'path': file_path,
+                    'size': stats.st_size if os.path.isfile(file_path) else None,
+                    'modifiedTime': format_date(stats.st_mtime),
+                    'createdTime': format_date(stats.st_ctime),
+                    'isDirectory': os.path.isdir(file_path),
+                    'permissions': oct(stats.st_mode)[-3:],
+                }
+
+                # Utiliser une boîte de dialogue simple pour les propriétés locales
+                from PyQt5.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox
+
+                dialog = QDialog(self)
+                dialog.setWindowTitle(f"ℹ️ Propriétés: {clean_name}")
+                dialog.resize(400, 300)
+
+                layout = QVBoxLayout(dialog)
+                form_layout = QFormLayout()
+
+                form_layout.addRow("📄 Nom:", QLabel(metadata['name']))
+                form_layout.addRow("📂 Chemin:", QLabel(metadata['path']))
+                form_layout.addRow("🏷️ Type:", QLabel("📂 Dossier" if metadata['isDirectory'] else "📄 Fichier"))
+
+                if metadata['size'] is not None:
+                    form_layout.addRow("📏 Taille:", QLabel(format_file_size(metadata['size'])))
+
+                form_layout.addRow("📅 Modifié:", QLabel(metadata['modifiedTime']))
+                form_layout.addRow("🕐 Créé:", QLabel(metadata['createdTime']))
+                form_layout.addRow("🔒 Permissions:", QLabel(metadata['permissions']))
+
+                layout.addLayout(form_layout)
+
+                button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+                button_box.accepted.connect(dialog.accept)
+                layout.addWidget(button_box)
+
+                dialog.exec_()
+
+        except Exception as e:
+            print(f"Erreur dans show_local_file_properties: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Impossible d'obtenir les propriétés: {str(e)}", parent=self)
+
+    def share_selected_file(self):
+        """Partage un fichier Google Drive (fonctionnalité future)"""
+        self.status_bar.showMessage("🔗 Fonctionnalité de partage à venir...", 3000)
+
+    def open_in_explorer(self, folder_name):
+        """Ouvre un dossier dans l'explorateur système"""
+        try:
+            folder_path = os.path.join(self.local_model.current_path, folder_name)
+
+            if sys.platform == "win32":
+                os.startfile(folder_path)
+            elif sys.platform == "darwin":  # macOS
+                subprocess.run(["open", folder_path])
+            else:  # Linux et autres Unix
+                subprocess.run(["xdg-open", folder_path])
+
+        except Exception as e:
+            print(f"Erreur dans open_in_explorer: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Impossible d'ouvrir le dossier: {str(e)}", parent=self)
+
+    def open_file(self, file_name):
+        """Ouvre un fichier avec l'application par défaut"""
+        try:
+            file_path = os.path.join(self.local_model.current_path, file_name)
+
+            if sys.platform == "win32":
+                os.startfile(file_path)
+            elif sys.platform == "darwin":  # macOS
+                subprocess.run(["open", file_path])
+            else:  # Linux et autres Unix
+                subprocess.run(["xdg-open", file_path])
+
+        except Exception as e:
+            print(f"Erreur dans open_file: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Impossible d'ouvrir le fichier: {str(e)}", parent=self)
+
+    # ==================== NAVIGATION ====================
+
     def local_item_double_clicked(self, index) -> None:
         """Gère le double-clic sur un élément local"""
         if not index.isValid():
             return
 
-        name = self.local_model.item(index.row(), 0).text()
+        row = index.row()
+        if row >= self.local_model.rowCount() or not self.local_model.item(row, 0):
+            return
+
+        name = self.local_model.item(row, 0).text()
         clean_name = name.replace("📁 ", "").replace("📄 ", "")
 
         if clean_name == "..":
@@ -577,10 +1246,20 @@ class DriveExplorerMainWindow(QMainWindow):
             return
 
         row = index.row()
-        name = self.drive_model.item(row, 0).text()
+        if row >= self.drive_model.rowCount():
+            return
+
+        name_item = self.drive_model.item(row, 0)
+        type_item = self.drive_model.item(row, 3)
+        id_item = self.drive_model.item(row, 4)
+
+        if not name_item or not type_item or not id_item:
+            return
+
+        name = name_item.text()
         clean_name = name.split(" ", 1)[1] if " " in name else name
-        type_str = self.drive_model.item(row, 3).text()
-        file_id = self.drive_model.item(row, 4).text()
+        type_str = type_item.text()
+        file_id = id_item.text()
 
         if clean_name == "..":
             if self.drive_model.can_go_back():
@@ -633,7 +1312,8 @@ class DriveExplorerMainWindow(QMainWindow):
                                    parent=self)
             self.local_path_edit.setText(self.local_model.current_path)
 
-    # Gestion de la connexion
+    # ==================== GESTION DE LA CONNEXION ====================
+
     def disconnect_from_drive(self) -> None:
         """Se déconnecte de Google Drive"""
         if ConfirmationDialog.ask_confirmation(
@@ -659,33 +1339,167 @@ class DriveExplorerMainWindow(QMainWindow):
         if self.connected:
             self.drive_selector.clear()
             self.drive_selector.addItem("☁️ Mon Drive", "root")
-            for drive in self.drive_client.list_shared_drives():
-                self.drive_selector.addItem(f"🏢 {drive['name']}", drive['id'])
+            try:
+                for drive in self.drive_client.list_shared_drives():
+                    self.drive_selector.addItem(f"🏢 {drive['name']}", drive['id'])
+            except Exception as e:
+                print(f"Erreur lors du chargement des Shared Drives: {e}")
             self.refresh_drive_files()
             self.status_bar.showMessage("🔗 Reconnecté à Google Drive", 3000)
         self.update_toolbar_state()
 
-    # Méthodes contextuelles (seront ajoutées dans la prochaine partie)
-    def show_local_context_menu(self, position) -> None:
-        """Affiche le menu contextuel pour les fichiers locaux"""
-        pass  # À implémenter
+    # ==================== CALLBACKS POUR LES THREADS ====================
 
-    def show_drive_context_menu(self, position) -> None:
-        """Affiche le menu contextuel pour Google Drive"""
-        pass  # À implémenter
+    def update_progress(self, value):
+        """Met à jour la barre de progression"""
+        self.progress_bar.setValue(value)
+        self.progress_bar.setFormat(f"⏳ {value}%")
 
-    def rename_selected(self) -> None:
-        """Renomme l'élément sélectionné"""
-        pass  # À implémenter
+    def update_status(self, message):
+        """Met à jour le message de statut"""
+        self.status_bar.showMessage(message)
 
-    def delete_selected(self) -> None:
-        """Supprime l'élément sélectionné"""
-        pass  # À implémenter
+    def upload_completed(self, file_id):
+        """Appelé lorsqu'un upload est terminé"""
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage("✅ Upload terminé avec succès", 3000)
+        self.cache_manager.invalidate_drive_cache(self.drive_model.current_path_id)
+        self.refresh_drive_files()
 
-    def handle_local_files_dropped(self, file_paths: List[str]) -> None:
+    def folder_upload_completed(self, folder_id):
+        """Appelé lorsqu'un upload de dossier est terminé"""
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage("✅ Upload de dossier terminé avec succès", 3000)
+        self.cache_manager.invalidate_drive_cache(self.drive_model.current_path_id)
+        self.refresh_drive_files()
+
+    def upload_error(self, error_msg):
+        """Appelé lorsqu'une erreur se produit pendant l'upload"""
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage(f"❌ Erreur d'upload: {error_msg}", 5000)
+        ErrorDialog.show_error("❌ Erreur d'upload", f"Une erreur s'est produite: {error_msg}", parent=self)
+
+    def download_completed(self, file_path):
+        """Appelé lorsqu'un téléchargement est terminé"""
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage(f"✅ Téléchargement terminé: {file_path}", 3000)
+        if os.path.dirname(file_path) == self.local_model.current_path:
+            self.cache_manager.invalidate_local_cache(self.local_model.current_path)
+            self.refresh_local_files()
+
+    def download_error(self, error_msg):
+        """Appelé lorsqu'une erreur se produit pendant le téléchargement"""
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage(f"❌ Erreur de téléchargement: {error_msg}", 5000)
+        ErrorDialog.show_error("❌ Erreur de téléchargement", f"Une erreur s'est produite: {error_msg}", parent=self)
+
+    def update_upload_time(self, time_taken):
+        """Met à jour le temps d'upload dans la barre de statut"""
+        self.status_bar.showMessage(f"⚡ Upload terminé en {time_taken:.2f} secondes", 5000)
+
+    def update_download_time(self, time_taken):
+        """Met à jour le temps de téléchargement dans la barre de statut"""
+        self.status_bar.showMessage(f"⚡ Téléchargement terminé en {time_taken:.2f} secondes", 5000)
+
+    # ==================== DRAG & DROP ====================
+
+    def handle_local_files_dropped(self, file_paths):
         """Gère les fichiers déposés dans la vue locale"""
-        pass  # À implémenter
+        try:
+            destination_folder = self.local_model.current_path
 
-    def handle_drive_files_dropped(self, file_paths: List[str]) -> None:
+            if ConfirmationDialog.ask_confirmation(
+                    '📋 Copier les fichiers',
+                    f'Voulez-vous copier {len(file_paths)} fichier(s) vers {destination_folder}?',
+                    self
+            ):
+                errors = []
+                copied_count = 0
+
+                for file_path in file_paths:
+                    try:
+                        if os.path.isfile(file_path):
+                            filename = os.path.basename(file_path)
+                            destination_path = os.path.join(destination_folder, filename)
+                            shutil.copy2(file_path, destination_path)
+                            copied_count += 1
+                        elif os.path.isdir(file_path):
+                            folder_name = os.path.basename(file_path)
+                            destination_path = os.path.join(destination_folder, folder_name)
+                            shutil.copytree(file_path, destination_path, dirs_exist_ok=True)
+                            copied_count += 1
+                    except Exception as e:
+                        errors.append(f"Erreur lors de la copie de {os.path.basename(file_path)}: {str(e)}")
+
+                if errors:
+                    ErrorDialog.show_error("❌ Erreurs de copie", "\n".join(errors), parent=self)
+
+                if copied_count > 0:
+                    self.status_bar.showMessage(f"✅ {copied_count} élément(s) copié(s)", 3000)
+                    self.cache_manager.invalidate_local_cache(destination_folder)
+                    self.refresh_local_files()
+
+        except Exception as e:
+            print(f"Erreur dans handle_local_files_dropped: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Erreur lors du glisser-déposer: {str(e)}", parent=self)
+
+    def handle_drive_files_dropped(self, file_paths):
         """Gère les fichiers déposés dans la vue Google Drive"""
-        pass  # À implémenter
+        try:
+            if not self.connected:
+                ErrorDialog.show_error("❌ Non connecté",
+                                       "Vous devez être connecté à Google Drive pour uploader des fichiers.",
+                                       parent=self)
+                return
+
+            if not file_paths:
+                return
+
+            if ConfirmationDialog.ask_confirmation(
+                    '⬆️ Upload vers Google Drive',
+                    f'Voulez-vous uploader {len(file_paths)} fichier(s)/dossier(s) vers Google Drive?',
+                    self
+            ):
+                self.upload_files_list(file_paths)
+
+        except Exception as e:
+            print(f"Erreur dans handle_drive_files_dropped: {e}")
+            ErrorDialog.show_error("❌ Erreur", f"Erreur lors du glisser-déposer: {str(e)}", parent=self)
+
+    def upload_files_list(self, file_paths):
+        """Upload une liste de fichiers/dossiers vers Google Drive"""
+        try:
+            if not self.connected:
+                return
+
+            destination_id = self.drive_model.current_path_id
+            is_shared_drive = self.drive_client.is_shared_drive(self.drive_model.current_drive_id)
+
+            for file_path in file_paths:
+                if os.path.isfile(file_path):
+                    upload_thread = UploadThread(self.drive_client, file_path, destination_id, is_shared_drive)
+                    upload_thread.progress_signal.connect(self.update_progress)
+                    upload_thread.completed_signal.connect(self.upload_completed)
+                    upload_thread.error_signal.connect(self.upload_error)
+                    upload_thread.status_signal.connect(self.update_status)
+                    upload_thread.time_signal.connect(self.update_upload_time)
+                    self.upload_threads.append(upload_thread)
+                    upload_thread.start()
+
+                elif os.path.isdir(file_path):
+                    folder_upload_thread = FolderUploadThread(self.drive_client, file_path, destination_id, is_shared_drive)
+                    folder_upload_thread.progress_signal.connect(self.update_progress)
+                    folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
+                    folder_upload_thread.error_signal.connect(self.upload_error)
+                    folder_upload_thread.status_signal.connect(self.update_status)
+                    folder_upload_thread.time_signal.connect(self.update_upload_time)
+                    self.folder_upload_threads.append(folder_upload_thread)
+                    folder_upload_thread.start()
+
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(True)
+            self.status_bar.showMessage(f"🚀 Upload de {len(file_paths)} élément(s)...")
+
+        except Exception as e:
+            print(f"Erreur dans upload_files_list: {e}")
+            ErrorDialog.show_error("❌ Erreur d'upload", f"Erreur lors de l'upload: {str(e)}", parent=self)
