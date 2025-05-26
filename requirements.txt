@@ -1,0 +1,24 @@
+# Google Drive Explorer - Dépendances Python
+
+# Interface graphique
+PyQt5>=5.15.0
+
+# Google APIs
+google-api-python-client>=2.0.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=0.7.0
+google-auth>=2.0.0
+
+# Utilitaires
+requests>=2.25.0
+urllib3>=1.26.0
+
+# Sécurité et authentification
+cryptography>=3.4.8
+pyasn1>=0.4.8
+pyasn1-modules>=0.2.8
+rsa>=4.7.0
+
+# Autres dépendances utiles (optionnelles)
+# Pillow>=8.0.0  # Pour la manipulation d'images si nécessaire
+# python-dateutil>=2.8.0  # Pour la gestion avancée des dates

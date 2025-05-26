@@ -54,7 +54,7 @@ copy "%ANACONDA_LIBS%\*.dll" "dist\main\" >nul 2>&1
 REM ====== Création d'un raccourci sur le bureau ======
 echo 🔗 Création du raccourci sur le bureau...
 
-set SHORTCUT_NAME=MonApp.lnk
+set SHORTCUT_NAME=ZymoSync.lnk
 set EXE_PATH=%CD%\dist\main\main.exe
 set DESKTOP=%USERPROFILE%\Desktop
 
