@@ -42,7 +42,7 @@ def get_application_stylesheet():
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                                        stop:0 #4a4a4a, stop:1 #3c3c3c);
             border: 1px solid #555;
-            border-radius: 5px;
+            border-radius: 4px;
             spacing: 8px;
             padding: 5px;
             margin: 2px;
@@ -52,7 +52,7 @@ def get_application_stylesheet():
             color: white;
             padding: 8px 12px;
             margin: 2px;
-            border-radius: 6px;
+            border-radius: 4px;
             font-weight: bold;
             background: transparent;
         }
@@ -86,7 +86,7 @@ def get_application_stylesheet():
                                                        stop:0 #4a90e2, stop:1 #357abd);
             selection-color: white;
             border: 1px solid #555;
-            border-radius: 5px;
+            border-radius: 4px;
             gridline-color: #444;
         }
 
@@ -128,7 +128,7 @@ def get_application_stylesheet():
             color: white;
             border: 1px solid #666;
             padding: 8px 15px;
-            border-radius: 6px;
+            border-radius: 4px;
             font-weight: bold;
             min-width: 80px;
         }
@@ -156,7 +156,7 @@ def get_application_stylesheet():
             color: white;
             border: 2px solid #555;
             padding: 8px;
-            border-radius: 6px;
+            border-radius: 4px;
             font-size: 11pt;
         }
 
@@ -172,7 +172,7 @@ def get_application_stylesheet():
             color: white;
             border: 1px solid #666;
             padding: 8px;
-            border-radius: 6px;
+            border-radius: 4px;
             min-width: 100px;
         }
 
@@ -203,7 +203,7 @@ def get_application_stylesheet():
         /* Barre de progression stylée */
         QProgressBar {
             border: 2px solid #555;
-            border-radius: 8px;
+            border-radius: 5px;
             text-align: center;
             background-color: #3c3c3c;
             color: white;
@@ -214,7 +214,7 @@ def get_application_stylesheet():
         QProgressBar::chunk {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                                        stop:0 #4a90e2, stop:0.5 #357abd, stop:1 #4a90e2);
-            border-radius: 6px;
+            border-radius: 4px;
             margin: 1px;
         }
 
@@ -277,13 +277,13 @@ def get_application_stylesheet():
         QScrollBar:vertical {
             background: #2b2b2b;
             width: 12px;
-            border-radius: 6px;
+            border-radius: 4px;
         }
 
         QScrollBar::handle:vertical {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                                        stop:0 #5a5a5a, stop:1 #6a6a6a);
-            border-radius: 6px;
+            border-radius: 4px;
             min-height: 20px;
         }
 
@@ -299,13 +299,13 @@ def get_application_stylesheet():
         QScrollBar:horizontal {
             background: #2b2b2b;
             height: 12px;
-            border-radius: 6px;
+            border-radius: 4px;
         }
 
         QScrollBar::handle:horizontal {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                                        stop:0 #5a5a5a, stop:1 #6a6a6a);
-            border-radius: 6px;
+            border-radius: 4px;
             min-width: 20px;
         }
 

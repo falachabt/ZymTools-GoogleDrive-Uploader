@@ -13,6 +13,8 @@ from .dialogs import (
     ErrorDialog,
     ProgressDialog
 )
+from .transfer_view import TransferPanel, TransferTreeView, TransferStatsWidget
+
 
 __all__ = [
     'DriveExplorerMainWindow',
@@ -24,5 +26,8 @@ __all__ = [
     'CreateFolderDialog',
     'ConfirmationDialog',
     'ErrorDialog',
-    'ProgressDialog'
+    'ProgressDialog',
+    'TransferPanel',
+    'TransferTreeView',
+    'TransferStatsWidget'
 ]

@@ -21,9 +21,11 @@ from core.google_drive_client import GoogleDriveClient
 from threads.file_load_threads import LocalFileLoadThread, DriveFileLoadThread
 from threads.transfer_threads import UploadThread, FolderUploadThread, DownloadThread
 from models.file_models import FileListModel, LocalFileModel
+from models.transfer_models import  TransferManager
 from views.tree_views import LocalTreeView, DriveTreeView
 from views.dialogs import (SearchDialog, FileDetailsDialog, RenameDialog,
                            CreateFolderDialog, ConfirmationDialog, ErrorDialog)
+from views.transfer_view import  TransferPanel
 from utils.helpers import (format_file_size, get_file_emoji, get_file_type_description,
                            format_date, sanitize_filename)
 
@@ -34,6 +36,8 @@ class DriveExplorerMainWindow(QMainWindow):
     def __init__(self):
         """Initialise la fenêtre principale"""
         super().__init__()
+
+        self.transfer_manager = TransferManager()
 
         # Initialiser les composants principaux
         self.setup_core_components()
@@ -103,6 +107,10 @@ class DriveExplorerMainWindow(QMainWindow):
 
         # Layout principal
         main_layout = QVBoxLayout()
+
+        # Panneau de transferts
+        self.transfer_panel = TransferPanel(self.transfer_manager)
+        main_layout.addWidget(self.transfer_panel)
 
         # Splitter pour diviser l'écran
         self.splitter = QSplitter(Qt.Horizontal)
@@ -230,6 +238,17 @@ class DriveExplorerMainWindow(QMainWindow):
 
         self.toolbar.addSeparator()
 
+        # === NOUVELLES ACTIONS POUR LES TRANSFERTS ===
+        self.show_transfers_action = QAction("📋 Transferts", self)
+        self.show_transfers_action.setToolTip("Afficher/Masquer le panneau de transferts")
+        self.show_transfers_action.triggered.connect(self.toggle_transfer_panel)
+        self.toolbar.addAction(self.show_transfers_action)
+
+        self.clear_completed_transfers_action = QAction("🧹 Vider terminés", self)
+        self.clear_completed_transfers_action.setToolTip("Supprimer les transferts terminés")
+        self.clear_completed_transfers_action.triggered.connect(self.clear_completed_transfers)
+        self.toolbar.addAction(self.clear_completed_transfers_action)
+
         self.clear_cache_action = QAction("🗑️ Vider cache", self)
         self.clear_cache_action.setToolTip("Vider le cache des données")
         self.clear_cache_action.triggered.connect(self.clear_cache)
@@ -289,6 +308,12 @@ class DriveExplorerMainWindow(QMainWindow):
         self.drive_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.drive_view.customContextMenuRequested.connect(self.show_drive_context_menu)
         self.drive_view.local_files_dropped.connect(self.handle_drive_files_dropped)
+
+    def connect_transfer_signals(self) -> None:
+        """Connecte les signaux du panneau de transferts"""
+        self.transfer_panel.cancel_transfer_requested.connect(self.cancel_transfer)
+        self.transfer_panel.pause_transfer_requested.connect(self.pause_transfer)
+        self.transfer_panel.resume_transfer_requested.connect(self.resume_transfer)
 
     def update_toolbar_state(self) -> None:
         """Met à jour l'état des boutons selon la connexion"""
@@ -706,7 +731,7 @@ class DriveExplorerMainWindow(QMainWindow):
     # ==================== ACTIONS SUR LES FICHIERS ====================
 
     def upload_selected_files(self):
-        """Upload les fichiers et dossiers sélectionnés vers Google Drive"""
+        """Upload les fichiers et dossiers sélectionnés vers Google Drive (VERSION MODIFIÉE)"""
         try:
             if not self.connected:
                 ErrorDialog.show_error("❌ Non connecté",
@@ -733,7 +758,11 @@ class DriveExplorerMainWindow(QMainWindow):
                 item_path = os.path.join(self.local_model.current_path, name)
 
                 if os.path.isfile(item_path):
-                    upload_thread = UploadThread(self.drive_client, item_path, destination_id, is_shared_drive)
+                    # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
+                    upload_thread = UploadThread(
+                        self.drive_client, item_path, destination_id,
+                        is_shared_drive, self.transfer_manager
+                    )
                     upload_thread.progress_signal.connect(self.update_progress)
                     upload_thread.completed_signal.connect(self.upload_completed)
                     upload_thread.error_signal.connect(self.upload_error)
@@ -743,7 +772,11 @@ class DriveExplorerMainWindow(QMainWindow):
                     upload_thread.start()
 
                 elif os.path.isdir(item_path):
-                    folder_upload_thread = FolderUploadThread(self.drive_client, item_path, destination_id, is_shared_drive)
+                    # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
+                    folder_upload_thread = FolderUploadThread(
+                        self.drive_client, item_path, destination_id,
+                        is_shared_drive, self.transfer_manager
+                    )
                     folder_upload_thread.progress_signal.connect(self.update_progress)
                     folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
                     folder_upload_thread.error_signal.connect(self.upload_error)
@@ -752,15 +785,16 @@ class DriveExplorerMainWindow(QMainWindow):
                     self.folder_upload_threads.append(folder_upload_thread)
                     folder_upload_thread.start()
 
-            self.progress_bar.setValue(0)
-            self.progress_bar.setVisible(True)
+            # Afficher le panneau de transferts si il est réduit
+            if self.transfer_panel.is_collapsed:
+                self.transfer_panel.toggle_panel()
 
         except Exception as e:
             print(f"Erreur dans upload_selected_files: {e}")
             ErrorDialog.show_error("❌ Erreur d'upload", f"Erreur lors de l'upload: {str(e)}", parent=self)
 
     def download_selected_files(self):
-        """Télécharge les fichiers sélectionnés depuis Google Drive"""
+        """Télécharge les fichiers sélectionnés depuis Google Drive (VERSION MODIFIÉE)"""
         try:
             indexes = self.drive_view.selectedIndexes()
             if not indexes:
@@ -774,13 +808,20 @@ class DriveExplorerMainWindow(QMainWindow):
                         name_item = self.drive_model.item(row, 0)
                         type_item = self.drive_model.item(row, 3)
                         id_item = self.drive_model.item(row, 4)
+                        size_item = self.drive_model.item(row, 1)
 
                         if name_item and type_item and id_item:
-                            rows_info.append((row, name_item.text(), type_item.text(), id_item.text()))
+                            # Récupérer la taille pour le calcul de vitesse
+                            size_text = size_item.text() if size_item else ""
+                            file_size = self.parse_file_size(size_text)
 
-            files_to_download = [(row, name.split(" ", 1)[1] if " " in name else name, file_id)
-                                 for row, name, file_type, file_id in rows_info
-                                 if ".." not in name and "📂 Dossier" not in file_type and "Retour à la navigation" not in name]
+                            rows_info.append((row, name_item.text(), type_item.text(),
+                                              id_item.text(), file_size))
+
+            files_to_download = [(row, name.split(" ", 1)[1] if " " in name else name, file_id, file_size)
+                                 for row, name, file_type, file_id, file_size in rows_info
+                                 if
+                                 ".." not in name and "📂 Dossier" not in file_type and "Retour à la navigation" not in name]
 
             if not files_to_download:
                 return
@@ -791,8 +832,12 @@ class DriveExplorerMainWindow(QMainWindow):
             if not destination_dir:
                 return
 
-            for row, name, file_id in files_to_download:
-                download_thread = DownloadThread(self.drive_client, file_id, name, destination_dir)
+            for row, name, file_id, file_size in files_to_download:
+                # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
+                download_thread = DownloadThread(
+                    self.drive_client, file_id, name, destination_dir,
+                    file_size, self.transfer_manager
+                )
                 download_thread.progress_signal.connect(self.update_progress)
                 download_thread.completed_signal.connect(self.download_completed)
                 download_thread.error_signal.connect(self.download_error)
@@ -800,13 +845,16 @@ class DriveExplorerMainWindow(QMainWindow):
                 self.download_threads.append(download_thread)
                 download_thread.start()
 
-                self.progress_bar.setValue(0)
-                self.progress_bar.setVisible(True)
-                self.status_bar.showMessage(f"⬇️ Téléchargement de {name}...")
+            # Afficher le panneau de transferts si il est réduit
+            if self.transfer_panel.is_collapsed:
+                self.transfer_panel.toggle_panel()
+
+            self.status_bar.showMessage(f"⬇️ Téléchargement de {len(files_to_download)} fichier(s)...")
 
         except Exception as e:
             print(f"Erreur dans download_selected_files: {e}")
-            ErrorDialog.show_error("❌ Erreur de téléchargement", f"Erreur lors du téléchargement: {str(e)}", parent=self)
+            ErrorDialog.show_error("❌ Erreur de téléchargement", f"Erreur lors du téléchargement: {str(e)}",
+                                   parent=self)
 
     def rename_selected(self):
         """Renomme l'élément sélectionné"""
@@ -1360,8 +1408,9 @@ class DriveExplorerMainWindow(QMainWindow):
         self.status_bar.showMessage(message)
 
     def upload_completed(self, file_id):
-        """Appelé lorsqu'un upload est terminé"""
-        self.progress_bar.setVisible(False)
+        """Appelé lorsqu'un upload est terminé (VERSION MODIFIÉE)"""
+        # La barre de progression globale est maintenant moins importante
+        # car chaque transfert a sa propre progression dans le panneau
         self.status_bar.showMessage("✅ Upload terminé avec succès", 3000)
         self.cache_manager.invalidate_drive_cache(self.drive_model.current_path_id)
         self.refresh_drive_files()
@@ -1380,9 +1429,8 @@ class DriveExplorerMainWindow(QMainWindow):
         ErrorDialog.show_error("❌ Erreur d'upload", f"Une erreur s'est produite: {error_msg}", parent=self)
 
     def download_completed(self, file_path):
-        """Appelé lorsqu'un téléchargement est terminé"""
-        self.progress_bar.setVisible(False)
-        self.status_bar.showMessage(f"✅ Téléchargement terminé: {file_path}", 3000)
+        """Appelé lorsqu'un téléchargement est terminé (VERSION MODIFIÉE)"""
+        self.status_bar.showMessage(f"✅ Téléchargement terminé: {os.path.basename(file_path)}", 3000)
         if os.path.dirname(file_path) == self.local_model.current_path:
             self.cache_manager.invalidate_local_cache(self.local_model.current_path)
             self.refresh_local_files()
@@ -1467,7 +1515,7 @@ class DriveExplorerMainWindow(QMainWindow):
             ErrorDialog.show_error("❌ Erreur", f"Erreur lors du glisser-déposer: {str(e)}", parent=self)
 
     def upload_files_list(self, file_paths):
-        """Upload une liste de fichiers/dossiers vers Google Drive"""
+        """Upload une liste de fichiers/dossiers vers Google Drive (VERSION MODIFIÉE)"""
         try:
             if not self.connected:
                 return
@@ -1477,7 +1525,11 @@ class DriveExplorerMainWindow(QMainWindow):
 
             for file_path in file_paths:
                 if os.path.isfile(file_path):
-                    upload_thread = UploadThread(self.drive_client, file_path, destination_id, is_shared_drive)
+                    # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
+                    upload_thread = UploadThread(
+                        self.drive_client, file_path, destination_id,
+                        is_shared_drive, self.transfer_manager
+                    )
                     upload_thread.progress_signal.connect(self.update_progress)
                     upload_thread.completed_signal.connect(self.upload_completed)
                     upload_thread.error_signal.connect(self.upload_error)
@@ -1487,7 +1539,11 @@ class DriveExplorerMainWindow(QMainWindow):
                     upload_thread.start()
 
                 elif os.path.isdir(file_path):
-                    folder_upload_thread = FolderUploadThread(self.drive_client, file_path, destination_id, is_shared_drive)
+                    # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
+                    folder_upload_thread = FolderUploadThread(
+                        self.drive_client, file_path, destination_id,
+                        is_shared_drive, self.transfer_manager
+                    )
                     folder_upload_thread.progress_signal.connect(self.update_progress)
                     folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
                     folder_upload_thread.error_signal.connect(self.upload_error)
@@ -1496,10 +1552,78 @@ class DriveExplorerMainWindow(QMainWindow):
                     self.folder_upload_threads.append(folder_upload_thread)
                     folder_upload_thread.start()
 
-            self.progress_bar.setValue(0)
-            self.progress_bar.setVisible(True)
+            # Afficher le panneau de transferts si il est réduit
+            if self.transfer_panel.is_collapsed:
+                self.transfer_panel.toggle_panel()
+
             self.status_bar.showMessage(f"🚀 Upload de {len(file_paths)} élément(s)...")
 
         except Exception as e:
             print(f"Erreur dans upload_files_list: {e}")
             ErrorDialog.show_error("❌ Erreur d'upload", f"Erreur lors de l'upload: {str(e)}", parent=self)
+
+
+    # ========= MÉTHODES POUR GÉRER LES TRANSFERTS =========
+
+    def cancel_transfer(self, transfer_id: str) -> None:
+        """Annule un transfert"""
+        # Trouver et annuler le thread correspondant
+        for thread_list in [self.upload_threads, self.download_threads, self.folder_upload_threads]:
+            for thread in thread_list:
+                if hasattr(thread, 'transfer_id') and thread.transfer_id == transfer_id:
+                    thread.cancel()
+                    break
+
+    def pause_transfer(self, transfer_id: str) -> None:
+        """Suspend un transfert (fonctionnalité future)"""
+        # Pour l'instant, juste mettre à jour le statut
+        # L'implémentation complète nécessiterait des modifications dans les threads
+        pass
+
+    def resume_transfer(self, transfer_id: str) -> None:
+        """Reprend un transfert suspendu (fonctionnalité future)"""
+        # Pour l'instant, juste mettre à jour le statut
+        pass
+
+    def toggle_transfer_panel(self) -> None:
+        """Bascule l'affichage du panneau de transferts"""
+        self.transfer_panel.toggle_panel()
+
+    def clear_completed_transfers(self) -> None:
+        """Supprime tous les transferts terminés"""
+        self.transfer_manager.clear_completed_transfers()
+        self.status_bar.showMessage("🧹 Transferts terminés supprimés", 2000)
+    # === MÉTHODES UTILITAIRES ===
+
+    def parse_file_size(self, size_text: str) -> int:
+        """
+        Parse une taille de fichier formatée en bytes
+
+        Args:
+            size_text: Texte de taille (ex: "1.5 MB")
+
+        Returns:
+            Taille en bytes
+        """
+        if not size_text or size_text == "":
+            return 0
+
+        try:
+            parts = size_text.split()
+            if len(parts) != 2:
+                return 0
+
+            value = float(parts[0])
+            unit = parts[1].upper()
+
+            multipliers = {
+                'B': 1,
+                'KB': 1024,
+                'MB': 1024 * 1024,
+                'GB': 1024 * 1024 * 1024,
+                'TB': 1024 * 1024 * 1024 * 1024
+            }
+
+            return int(value * multipliers.get(unit, 1))
+        except:
+            return 0
