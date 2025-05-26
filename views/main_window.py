@@ -46,11 +46,19 @@ class DriveExplorerMainWindow(QMainWindow):
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
+
+
+
         # Créer l'interface utilisateur
         self.setup_ui()
 
+
+
         # Connecter les signaux
         self.connect_signals()
+
+        # Connecter les signaux du panneau de transferts
+        self.connect_transfer_signals()
 
         # Charger les fichiers au démarrage
         self.refresh_local_files()
@@ -101,12 +109,16 @@ class DriveExplorerMainWindow(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
+
+
         # Barre d'outils et statut
         self.create_toolbar()
         self.create_status_bar()
 
         # Layout principal
         main_layout = QVBoxLayout()
+
+
 
         # Panneau de transferts
         self.transfer_panel = TransferPanel(self.transfer_manager)
@@ -132,9 +144,12 @@ class DriveExplorerMainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(True)
+
+
         main_layout.addWidget(self.progress_bar)
 
         self.central_widget.setLayout(main_layout)
+
 
         # Raccourcis clavier
         self.setup_shortcuts()

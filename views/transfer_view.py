@@ -24,16 +24,14 @@ class TransferTreeView(QTreeView):
         self.setSortingEnabled(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
 
+
+
         # Ajuster les colonnes
         header = self.header()
         header.setStretchLastSection(True)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)  # Fichier
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Statut
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Progrès
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Vitesse
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # ETA
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Taille
+
+
+
 
 
 class TransferStatsWidget(QWidget):
@@ -50,10 +48,18 @@ class TransferStatsWidget(QWidget):
         self.transfer_manager = transfer_manager
         self.setup_ui()
 
-        # Timer pour mettre à jour les stats
+        # MODIFICATION : Ne pas démarrer le timer immédiatement
+        # Créer le timer mais ne pas le démarrer tout de suite
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_stats)
+
+        # Démarrer le timer avec un délai pour laisser le temps à tout de s'initialiser
+        QTimer.singleShot(2000, self.start_updates)  # Démarrer après 2 secondes
+
+    def start_updates(self) -> None:
+        """Démarre les mises à jour automatiques"""
         self.update_timer.start(1000)  # Mise à jour chaque seconde
+        self.update_stats()  # Première mise à jour immédiate
 
     def setup_ui(self) -> None:
         """Configure l'interface utilisateur"""
@@ -92,31 +98,39 @@ class TransferStatsWidget(QWidget):
 
     def update_stats(self) -> None:
         """Met à jour les statistiques affichées"""
-        all_transfers = self.transfer_manager.get_all_transfers()
-        active_transfers = self.transfer_manager.get_active_transfers()
-        completed_transfers = self.transfer_manager.get_completed_transfers()
+        try:
+            # PROTECTION : Vérifier que le transfer_manager existe
+            if not hasattr(self, 'transfer_manager') or self.transfer_manager is None:
+                return
 
-        # Compter les erreurs
-        error_count = sum(1 for t in all_transfers.values() if t.status == TransferStatus.ERROR)
+            all_transfers = self.transfer_manager.get_all_transfers()
+            active_transfers = self.transfer_manager.get_active_transfers()
+            completed_transfers = self.transfer_manager.get_completed_transfers()
 
-        # Mettre à jour les labels
-        self.total_label.setText(f"📊 Total: {len(all_transfers)}")
-        self.active_label.setText(f"🔄 Actifs: {len(active_transfers)}")
-        self.completed_label.setText(f"✅ Terminés: {len(completed_transfers) - error_count}")
-        self.errors_label.setText(f"❌ Erreurs: {error_count}")
+            # Compter les erreurs
+            error_count = sum(1 for t in all_transfers.values() if t.status == TransferStatus.ERROR)
 
-        # Calculer le progrès global et la vitesse
-        if active_transfers:
-            total_progress = sum(t.progress for t in active_transfers.values())
-            global_progress = total_progress / len(active_transfers)
+            # Mettre à jour les labels
+            self.total_label.setText(f"📊 Total: {len(all_transfers)}")
+            self.active_label.setText(f"🔄 Actifs: {len(active_transfers)}")
+            self.completed_label.setText(f"✅ Terminés: {len(completed_transfers) - error_count}")
+            self.errors_label.setText(f"❌ Erreurs: {error_count}")
 
-            total_speed = sum(t.speed for t in active_transfers.values())
+            # Calculer le progrès global et la vitesse
+            if active_transfers:
+                total_progress = sum(t.progress for t in active_transfers.values())
+                global_progress = total_progress / len(active_transfers)
 
-            self.global_progress.setValue(int(global_progress))
-            self.speed_label.setText(f"⚡ Vitesse: {self.format_speed(total_speed)}")
-        else:
-            self.global_progress.setValue(0)
-            self.speed_label.setText("⚡ Vitesse: 0 B/s")
+                total_speed = sum(t.speed for t in active_transfers.values())
+
+                self.global_progress.setValue(int(global_progress))
+                self.speed_label.setText(f"⚡ Vitesse: {self.format_speed(total_speed)}")
+            else:
+                self.global_progress.setValue(0)
+                self.speed_label.setText("⚡ Vitesse: 0 B/s")
+        except Exception as e:
+            # En cas d'erreur, ne pas crasher
+            print(f"Erreur dans update_stats: {e}")
 
     def format_speed(self, speed: float) -> str:
         """Formate la vitesse en bytes/seconde"""
@@ -128,7 +142,6 @@ class TransferStatsWidget(QWidget):
             return f"{speed / (1024 * 1024):.1f} MB/s"
         else:
             return f"{speed / (1024 * 1024 * 1024):.1f} GB/s"
-
 
 class TransferPanel(QWidget):
     """Panneau principal de gestion des transferts"""
@@ -147,7 +160,11 @@ class TransferPanel(QWidget):
         """
         super().__init__()
         self.transfer_manager = transfer_manager
+
+
         self.setup_ui()
+
+
         self.connect_signals()
 
     def setup_ui(self) -> None:
@@ -163,6 +180,8 @@ class TransferPanel(QWidget):
         title_label.setFont(title_font)
         title_layout.addWidget(title_label)
         title_layout.addStretch()
+
+
 
         # Bouton pour réduire/agrandir
         self.toggle_button = QPushButton("🔽")
@@ -180,9 +199,13 @@ class TransferPanel(QWidget):
         self.create_toolbar()
         content_layout.addWidget(self.toolbar)
 
+
         # Vue des transferts
         self.transfer_model = TransferListModel(self.transfer_manager)
+
         self.transfer_view = TransferTreeView()
+
+
         self.transfer_view.setModel(self.transfer_model)
         content_layout.addWidget(self.transfer_view)
 
@@ -193,6 +216,7 @@ class TransferPanel(QWidget):
         layout.addWidget(self.main_content)
         self.setLayout(layout)
 
+
         # État initial
         self.is_collapsed = False
 
@@ -202,16 +226,6 @@ class TransferPanel(QWidget):
         self.toolbar.setIconSize(QSize(16, 16))
 
         # Actions de contrôle
-        self.pause_action = QAction("⏸️ Suspendre", self)
-        self.pause_action.setToolTip("Suspendre le transfert sélectionné")
-        self.pause_action.triggered.connect(self.pause_selected_transfer)
-        self.toolbar.addAction(self.pause_action)
-
-        self.resume_action = QAction("▶️ Reprendre", self)
-        self.resume_action.setToolTip("Reprendre le transfert sélectionné")
-        self.resume_action.triggered.connect(self.resume_selected_transfer)
-        self.toolbar.addAction(self.resume_action)
-
         self.cancel_action = QAction("🚫 Annuler", self)
         self.cancel_action.setToolTip("Annuler le transfert sélectionné")
         self.cancel_action.triggered.connect(self.cancel_selected_transfer)
@@ -260,10 +274,10 @@ class TransferPanel(QWidget):
             if transfer_id:
                 transfer = self.transfer_manager.get_transfer(transfer_id)
                 if transfer:
-                    if transfer.status == TransferStatus.IN_PROGRESS:
-                        menu.addAction("⏸️ Suspendre", lambda: self.pause_transfer(transfer_id))
-                    elif transfer.status == TransferStatus.PAUSED:
-                        menu.addAction("▶️ Reprendre", lambda: self.resume_transfer(transfer_id))
+                    #if transfer.status == TransferStatus.IN_PROGRESS:
+                    #    menu.addAction("⏸️ Suspendre", lambda: self.pause_transfer(transfer_id))
+                    #elif transfer.status == TransferStatus.PAUSED:
+                    #    menu.addAction("▶️ Reprendre", lambda: self.resume_transfer(transfer_id))
 
                     if transfer.status in [TransferStatus.PENDING, TransferStatus.IN_PROGRESS, TransferStatus.PAUSED]:
                         menu.addAction("🚫 Annuler", lambda: self.cancel_transfer(transfer_id))
