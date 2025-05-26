@@ -5,8 +5,29 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="53711b66-3e61-4d8a-8887-646875cd1481" name="Changes" comment="Build executable ok">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/build.bat" beforeDir="false" afterPath="$PROJECT_DIR$/build.bat" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/settings.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/styles.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/styles.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/core/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/core/cache_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/cache_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/core/google_drive_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/google_drive_client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/models/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/models/file_models.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/file_models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/resources/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/threads/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/threads/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/threads/file_load_threads.py" beforeDir="false" afterPath="$PROJECT_DIR$/threads/file_load_threads.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/threads/transfer_threads.py" beforeDir="false" afterPath="$PROJECT_DIR$/threads/transfer_threads.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/utils/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/utils/helpers.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils/helpers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/views/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/views/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/views/dialogs.py" beforeDir="false" afterPath="$PROJECT_DIR$/views/dialogs.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/views/main_window.py" beforeDir="false" afterPath="$PROJECT_DIR$/views/main_window.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/views/tree_views.py" beforeDir="false" afterPath="$PROJECT_DIR$/views/tree_views.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -335,7 +356,7 @@
       <workItem from="1747810755930" duration="14697000" />
       <workItem from="1747896341422" duration="22645000" />
       <workItem from="1747984347221" duration="19847000" />
-      <workItem from="1748072731916" duration="5808000" />
+      <workItem from="1748072731916" duration="6233000" />
     </task>
     <task id="LOCAL-00001" summary="Build executable ok">
       <option name="closed" value="true" />
@@ -345,7 +366,15 @@
       <option name="project" value="LOCAL" />
       <updated>1747837352173</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="Build executable ok">
+      <option name="closed" value="true" />
+      <created>1748248413660</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1748248413660</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
