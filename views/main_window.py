@@ -1,5 +1,5 @@
 """
-Fenêtre principale de l'application Google Drive Explorer
+Fenêtre principale de l'application Google Drive Explorer avec interface à onglets
 """
 
 import os
@@ -10,7 +10,8 @@ from typing import List, Dict, Any, Optional
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QFileDialog, QMessageBox,
                              QMenu, QAction, QSplitter, QToolBar, QStatusBar,
-                             QProgressBar, QLineEdit, QComboBox, QApplication)
+                             QProgressBar, QLineEdit, QComboBox, QApplication,
+                             QTabWidget)
 from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
 from PyQt5.QtGui import QKeySequence
 
@@ -31,7 +32,7 @@ from utils.helpers import (format_file_size, get_file_emoji, get_file_type_descr
 
 
 class DriveExplorerMainWindow(QMainWindow):
-    """Fenêtre principale de l'application avec cache, threading et style moderne"""
+    """Fenêtre principale de l'application avec interface à onglets"""
 
     def __init__(self):
         """Initialise la fenêtre principale"""
@@ -46,13 +47,8 @@ class DriveExplorerMainWindow(QMainWindow):
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
-
-
-
         # Créer l'interface utilisateur
         self.setup_ui()
-
-
 
         # Connecter les signaux
         self.connect_signals()
@@ -96,20 +92,12 @@ class DriveExplorerMainWindow(QMainWindow):
         except Exception as e:
             self.connected = False
             print(f"❌ Erreur de connexion à Google Drive: {e}")
-            # Ne pas afficher d'erreur au démarrage, juste logger
-            # ErrorDialog.show_error(
-            #     "❌ Erreur de connexion",
-            #     f"Impossible de se connecter à Google Drive: {str(e)}",
-            #     parent=self
-            # )
 
     def setup_ui(self) -> None:
-        """Configure l'interface utilisateur avec style moderne"""
+        """Configure l'interface utilisateur avec onglets"""
         # Widget central
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-
-
 
         # Barre d'outils et statut
         self.create_toolbar()
@@ -118,11 +106,37 @@ class DriveExplorerMainWindow(QMainWindow):
         # Layout principal
         main_layout = QVBoxLayout()
 
+        # === NOUVEAU : Système d'onglets ===
+        self.tab_widget = QTabWidget()
 
+        # Onglet 1: Explorateur de fichiers
+        self.explorer_tab = self.create_explorer_tab()
+        self.tab_widget.addTab(self.explorer_tab, "📂 Explorateur")
 
-        # Panneau de transferts
+        # Onglet 2: Gestionnaire de transferts
         self.transfer_panel = TransferPanel(self.transfer_manager)
-        main_layout.addWidget(self.transfer_panel)
+        self.tab_widget.addTab(self.transfer_panel, "📋 Transferts")
+
+        # Connecter le signal de changement d'onglet
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+
+        main_layout.addWidget(self.tab_widget)
+
+        # Barre de progression (reste en bas)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setTextVisible(True)
+        main_layout.addWidget(self.progress_bar)
+
+        self.central_widget.setLayout(main_layout)
+
+        # Raccourcis clavier
+        self.setup_shortcuts()
+
+    def create_explorer_tab(self) -> QWidget:
+        """Crée l'onglet explorateur de fichiers"""
+        explorer_widget = QWidget()
+        explorer_layout = QVBoxLayout(explorer_widget)
 
         # Splitter pour diviser l'écran
         self.splitter = QSplitter(Qt.Horizontal)
@@ -138,21 +152,9 @@ class DriveExplorerMainWindow(QMainWindow):
         self.splitter.addWidget(drive_widget)
         self.splitter.setSizes([int(WINDOW_WIDTH * 0.4), int(WINDOW_WIDTH * 0.6)])
 
-        main_layout.addWidget(self.splitter)
+        explorer_layout.addWidget(self.splitter)
 
-        # Barre de progression
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setTextVisible(True)
-
-
-        main_layout.addWidget(self.progress_bar)
-
-        self.central_widget.setLayout(main_layout)
-
-
-        # Raccourcis clavier
-        self.setup_shortcuts()
+        return explorer_widget
 
     def create_local_panel(self) -> QWidget:
         """Crée le panneau des fichiers locaux"""
@@ -253,10 +255,10 @@ class DriveExplorerMainWindow(QMainWindow):
 
         self.toolbar.addSeparator()
 
-        # === NOUVELLES ACTIONS POUR LES TRANSFERTS ===
+        # === ACTIONS POUR LES TRANSFERTS MODIFIÉES ===
         self.show_transfers_action = QAction("📋 Transferts", self)
-        self.show_transfers_action.setToolTip("Afficher/Masquer le panneau de transferts")
-        self.show_transfers_action.triggered.connect(self.toggle_transfer_panel)
+        self.show_transfers_action.setToolTip("Aller à l'onglet Transferts")
+        self.show_transfers_action.triggered.connect(self.show_transfers_tab)
         self.toolbar.addAction(self.show_transfers_action)
 
         self.clear_completed_transfers_action = QAction("🧹 Vider terminés", self)
@@ -309,6 +311,23 @@ class DriveExplorerMainWindow(QMainWindow):
         QShortcut(QKeySequence("F2"), self, self.rename_selected)
         QShortcut(QKeySequence("Delete"), self, self.delete_selected)
         QShortcut(QKeySequence("Ctrl+F"), self, self.show_search_dialog)
+        # Nouveau raccourci pour aller aux transferts
+        QShortcut(QKeySequence("Ctrl+T"), self, self.show_transfers_tab)
+
+    def on_tab_changed(self, index: int) -> None:
+        """Appelé quand l'onglet change"""
+        if index == 1:  # Onglet Transferts
+            # Mettre à jour le titre de l'onglet avec le nombre de transferts
+            transfer_count = len(self.transfer_manager.get_all_transfers())
+            active_count = len(self.transfer_manager.get_active_transfers())
+            if active_count > 0:
+                self.tab_widget.setTabText(1, f"📋 Transferts ({active_count} actifs)")
+            else:
+                self.tab_widget.setTabText(1, f"📋 Transferts ({transfer_count})")
+
+    def show_transfers_tab(self) -> None:
+        """Affiche l'onglet des transferts"""
+        self.tab_widget.setCurrentIndex(1)
 
     def connect_signals(self) -> None:
         """Connecte les signaux des vues"""
@@ -329,6 +348,25 @@ class DriveExplorerMainWindow(QMainWindow):
         self.transfer_panel.cancel_transfer_requested.connect(self.cancel_transfer)
         self.transfer_panel.pause_transfer_requested.connect(self.pause_transfer)
         self.transfer_panel.resume_transfer_requested.connect(self.resume_transfer)
+
+        # Connecter les signaux du transfer_manager pour mettre à jour l'onglet
+        self.transfer_manager.transfer_added.connect(self.update_transfer_tab_title)
+        self.transfer_manager.transfer_removed.connect(self.update_transfer_tab_title)
+        self.transfer_manager.transfer_status_changed.connect(self.update_transfer_tab_title)
+
+    def update_transfer_tab_title(self, *args) -> None:
+        """Met à jour le titre de l'onglet transferts"""
+        transfer_count = len(self.transfer_manager.get_all_transfers())
+        active_count = len(self.transfer_manager.get_active_transfers())
+
+        if active_count > 0:
+            title = f"📋 Transferts ({active_count} actifs)"
+        elif transfer_count > 0:
+            title = f"📋 Transferts ({transfer_count})"
+        else:
+            title = "📋 Transferts"
+
+        self.tab_widget.setTabText(1, title)
 
     def update_toolbar_state(self) -> None:
         """Met à jour l'état des boutons selon la connexion"""
@@ -746,7 +784,7 @@ class DriveExplorerMainWindow(QMainWindow):
     # ==================== ACTIONS SUR LES FICHIERS ====================
 
     def upload_selected_files(self):
-        """Upload les fichiers et dossiers sélectionnés vers Google Drive (VERSION MODIFIÉE)"""
+        """Upload les fichiers et dossiers sélectionnés vers Google Drive"""
         try:
             if not self.connected:
                 ErrorDialog.show_error("❌ Non connecté",
@@ -773,7 +811,6 @@ class DriveExplorerMainWindow(QMainWindow):
                 item_path = os.path.join(self.local_model.current_path, name)
 
                 if os.path.isfile(item_path):
-                    # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
                     upload_thread = UploadThread(
                         self.drive_client, item_path, destination_id,
                         is_shared_drive, self.transfer_manager
@@ -787,7 +824,6 @@ class DriveExplorerMainWindow(QMainWindow):
                     upload_thread.start()
 
                 elif os.path.isdir(item_path):
-                    # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
                     folder_upload_thread = FolderUploadThread(
                         self.drive_client, item_path, destination_id,
                         is_shared_drive, self.transfer_manager
@@ -800,16 +836,15 @@ class DriveExplorerMainWindow(QMainWindow):
                     self.folder_upload_threads.append(folder_upload_thread)
                     folder_upload_thread.start()
 
-            # Afficher le panneau de transferts si il est réduit
-            if self.transfer_panel.is_collapsed:
-                self.transfer_panel.toggle_panel()
+            # Afficher l'onglet des transferts
+            self.show_transfers_tab()
 
         except Exception as e:
             print(f"Erreur dans upload_selected_files: {e}")
             ErrorDialog.show_error("❌ Erreur d'upload", f"Erreur lors de l'upload: {str(e)}", parent=self)
 
     def download_selected_files(self):
-        """Télécharge les fichiers sélectionnés depuis Google Drive (VERSION MODIFIÉE)"""
+        """Télécharge les fichiers sélectionnés depuis Google Drive"""
         try:
             indexes = self.drive_view.selectedIndexes()
             if not indexes:
@@ -848,7 +883,6 @@ class DriveExplorerMainWindow(QMainWindow):
                 return
 
             for row, name, file_id, file_size in files_to_download:
-                # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
                 download_thread = DownloadThread(
                     self.drive_client, file_id, name, destination_dir,
                     file_size, self.transfer_manager
@@ -860,9 +894,8 @@ class DriveExplorerMainWindow(QMainWindow):
                 self.download_threads.append(download_thread)
                 download_thread.start()
 
-            # Afficher le panneau de transferts si il est réduit
-            if self.transfer_panel.is_collapsed:
-                self.transfer_panel.toggle_panel()
+            # Afficher l'onglet des transferts
+            self.show_transfers_tab()
 
             self.status_bar.showMessage(f"⬇️ Téléchargement de {len(files_to_download)} fichier(s)...")
 
@@ -1423,9 +1456,7 @@ class DriveExplorerMainWindow(QMainWindow):
         self.status_bar.showMessage(message)
 
     def upload_completed(self, file_id):
-        """Appelé lorsqu'un upload est terminé (VERSION MODIFIÉE)"""
-        # La barre de progression globale est maintenant moins importante
-        # car chaque transfert a sa propre progression dans le panneau
+        """Appelé lorsqu'un upload est terminé"""
         self.status_bar.showMessage("✅ Upload terminé avec succès", 3000)
         self.cache_manager.invalidate_drive_cache(self.drive_model.current_path_id)
         self.refresh_drive_files()
@@ -1444,7 +1475,7 @@ class DriveExplorerMainWindow(QMainWindow):
         ErrorDialog.show_error("❌ Erreur d'upload", f"Une erreur s'est produite: {error_msg}", parent=self)
 
     def download_completed(self, file_path):
-        """Appelé lorsqu'un téléchargement est terminé (VERSION MODIFIÉE)"""
+        """Appelé lorsqu'un téléchargement est terminé"""
         self.status_bar.showMessage(f"✅ Téléchargement terminé: {os.path.basename(file_path)}", 3000)
         if os.path.dirname(file_path) == self.local_model.current_path:
             self.cache_manager.invalidate_local_cache(self.local_model.current_path)
@@ -1530,7 +1561,7 @@ class DriveExplorerMainWindow(QMainWindow):
             ErrorDialog.show_error("❌ Erreur", f"Erreur lors du glisser-déposer: {str(e)}", parent=self)
 
     def upload_files_list(self, file_paths):
-        """Upload une liste de fichiers/dossiers vers Google Drive (VERSION MODIFIÉE)"""
+        """Upload une liste de fichiers/dossiers vers Google Drive"""
         try:
             if not self.connected:
                 return
@@ -1540,7 +1571,6 @@ class DriveExplorerMainWindow(QMainWindow):
 
             for file_path in file_paths:
                 if os.path.isfile(file_path):
-                    # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
                     upload_thread = UploadThread(
                         self.drive_client, file_path, destination_id,
                         is_shared_drive, self.transfer_manager
@@ -1554,7 +1584,6 @@ class DriveExplorerMainWindow(QMainWindow):
                     upload_thread.start()
 
                 elif os.path.isdir(file_path):
-                    # === UTILISATION DU NOUVEAU THREAD AMÉLIORÉ ===
                     folder_upload_thread = FolderUploadThread(
                         self.drive_client, file_path, destination_id,
                         is_shared_drive, self.transfer_manager
@@ -1567,16 +1596,14 @@ class DriveExplorerMainWindow(QMainWindow):
                     self.folder_upload_threads.append(folder_upload_thread)
                     folder_upload_thread.start()
 
-            # Afficher le panneau de transferts si il est réduit
-            if self.transfer_panel.is_collapsed:
-                self.transfer_panel.toggle_panel()
+            # Afficher l'onglet des transferts
+            self.show_transfers_tab()
 
             self.status_bar.showMessage(f"🚀 Upload de {len(file_paths)} élément(s)...")
 
         except Exception as e:
             print(f"Erreur dans upload_files_list: {e}")
             ErrorDialog.show_error("❌ Erreur d'upload", f"Erreur lors de l'upload: {str(e)}", parent=self)
-
 
     # ========= MÉTHODES POUR GÉRER LES TRANSFERTS =========
 
@@ -1592,7 +1619,6 @@ class DriveExplorerMainWindow(QMainWindow):
     def pause_transfer(self, transfer_id: str) -> None:
         """Suspend un transfert (fonctionnalité future)"""
         # Pour l'instant, juste mettre à jour le statut
-        # L'implémentation complète nécessiterait des modifications dans les threads
         pass
 
     def resume_transfer(self, transfer_id: str) -> None:
@@ -1600,14 +1626,11 @@ class DriveExplorerMainWindow(QMainWindow):
         # Pour l'instant, juste mettre à jour le statut
         pass
 
-    def toggle_transfer_panel(self) -> None:
-        """Bascule l'affichage du panneau de transferts"""
-        self.transfer_panel.toggle_panel()
-
     def clear_completed_transfers(self) -> None:
         """Supprime tous les transferts terminés"""
         self.transfer_manager.clear_completed_transfers()
         self.status_bar.showMessage("🧹 Transferts terminés supprimés", 2000)
+
     # === MÉTHODES UTILITAIRES ===
 
     def parse_file_size(self, size_text: str) -> int:

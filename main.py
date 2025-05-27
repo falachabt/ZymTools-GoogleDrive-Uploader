@@ -56,7 +56,7 @@ def main():
 
         # Message de bienvenue
         main_window.status_bar.showMessage(
-            "🚀 Bienvenue dans ZymTools Google Drive Explorer Stylé!",
+            "🚀 Bienvenue dans ZymTools Google Drive Explorer",
             5000
         )
 

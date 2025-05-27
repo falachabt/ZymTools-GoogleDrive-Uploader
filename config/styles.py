@@ -32,6 +32,10 @@ def get_application_stylesheet():
     """Retourne le CSS complet pour l'application"""
     return """
         /* Style général de l'application */
+        * {
+            font-size: 9pt;
+        }
+        
         QMainWindow {
             background-color: #2b2b2b;
             color: white;
@@ -46,6 +50,7 @@ def get_application_stylesheet():
             spacing: 8px;
             padding: 5px;
             margin: 2px;
+            font-size: 13pt;
         }
 
         QToolBar QAction {
@@ -55,6 +60,7 @@ def get_application_stylesheet():
             border-radius: 4px;
             font-weight: bold;
             background: transparent;
+            font-size: 13pt;
         }
 
         QToolBar QAction:hover {
@@ -75,6 +81,7 @@ def get_application_stylesheet():
             color: white;
             border-top: 1px solid #555;
             padding: 3px;
+            font-size: 9pt;
         }
 
         /* Vues d'arbre stylées */
@@ -88,6 +95,7 @@ def get_application_stylesheet():
             border: 1px solid #555;
             border-radius: 4px;
             gridline-color: #444;
+            font-size: 9pt;
         }
 
         QTreeView::item {
@@ -114,6 +122,7 @@ def get_application_stylesheet():
             border: 1px solid #666;
             border-radius: 3px;
             font-weight: bold;
+            font-size: 9pt;
         }
 
         QHeaderView::section:pressed {
@@ -131,6 +140,7 @@ def get_application_stylesheet():
             border-radius: 4px;
             font-weight: bold;
             min-width: 80px;
+            font-size: 9pt;
         }
 
         QPushButton:hover {
@@ -157,7 +167,7 @@ def get_application_stylesheet():
             border: 2px solid #555;
             padding: 8px;
             border-radius: 4px;
-            font-size: 11pt;
+            font-size: 9pt;
         }
 
         QLineEdit:focus {
@@ -174,6 +184,7 @@ def get_application_stylesheet():
             padding: 8px;
             border-radius: 4px;
             min-width: 100px;
+            font-size: 9pt;
         }
 
         QComboBox:hover {
@@ -209,6 +220,7 @@ def get_application_stylesheet():
             color: white;
             font-weight: bold;
             height: 25px;
+            font-size: 9pt;
         }
 
         QProgressBar::chunk {
@@ -222,6 +234,7 @@ def get_application_stylesheet():
         QLabel {
             color: white;
             font-weight: bold;
+            font-size: 9pt;
         }
 
         /* Splitter */
@@ -244,6 +257,7 @@ def get_application_stylesheet():
             border: 1px solid #555;
             border-radius: 5px;
             padding: 5px;
+            font-size: 9pt;
         }
 
         QMenu::item {
@@ -271,6 +285,7 @@ def get_application_stylesheet():
         QDialogButtonBox QPushButton {
             min-width: 100px;
             margin: 5px;
+            font-size: 9pt;
         }
 
         /* Scrollbars stylées */
@@ -317,4 +332,22 @@ def get_application_stylesheet():
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
             width: 0px;
         }
+        
+        QTabBar::tab {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                   stop:0 #4a4a4a, stop:1 #3c3c3c);
+        color: #cccccc;
+        padding: 8px 15px;
+        border: 1px solid #555;
+        border-top-left-radius: 4px;
+        border-top-right-radius: 4px;
+        font-size: 9pt;
+    }
+    QTabBar::tab:selected {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                   stop:0 #4a90e2, stop:1 #357abd);
+        color: white;
+        border-bottom: none;
+    }
+
     """
