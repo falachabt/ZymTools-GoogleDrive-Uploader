@@ -44,6 +44,8 @@ def show_error_dialog(error_message: str, details: str = None):
 
     error_box.exec_()
 
+
+
 def main():
     """Fonction principale de l'application"""
     try:
