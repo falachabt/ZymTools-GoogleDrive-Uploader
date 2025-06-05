@@ -11,7 +11,12 @@ from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
 from models.transfer_models import TransferManager, TransferType, TransferStatus
 
 
-class BaseOperationThread(QThread, ABC):
+class QThreadABCMeta(type(QThread), type(ABC)):
+    """Custom metaclass that combines QThread and ABC metaclasses"""
+    pass
+
+
+class BaseOperationThread(QThread, ABC, metaclass=QThreadABCMeta):
     """Base class for all operation threads with common functionality"""
     
     # Common signals
