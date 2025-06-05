@@ -5,7 +5,7 @@ Package threads containing improved asynchronous operation threads
 
 from .base_thread import BaseOperationThread
 from .file_operation_threads import (
-    FileUploadThread, FolderUploadThread, FileDownloadThread, BatchOperationThread
+    FileUploadThread, FolderUploadThread, FileDownloadThread
 )
 from .file_load_threads import (
     LocalFileLoadThread, DriveFileLoadThread, BackgroundFileIndexThread
@@ -22,7 +22,6 @@ __all__ = [
     'FileUploadThread',
     'FolderUploadThread', 
     'FileDownloadThread',
-    'BatchOperationThread',
     'LocalFileLoadThread',
     'DriveFileLoadThread',
     'BackgroundFileIndexThread',
