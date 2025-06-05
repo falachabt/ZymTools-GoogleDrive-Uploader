@@ -7,3 +7,15 @@ packages = ["cargo", "libiconv", "libxcrypt", "openssl", "pkg-config", "rustc"]
 
 [deployment]
 run = ["sh", "-c", "run"]
+
+[workflows]
+runButton = "Run Python App"
+
+[[workflows.workflow]]
+name = "Run Python App"
+author = 43514061
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
