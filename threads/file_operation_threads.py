@@ -214,30 +214,64 @@ class FolderUploadThread(BaseOperationThread):
         folder_mapping = {'': main_folder_id}
         
         try:
+            # Collecter d'abord tous les dossiers à créer dans l'ordre
+            folders_to_create = []
             for root, dirs, files in os.walk(self.folder_path):
                 rel_path = os.path.relpath(root, self.folder_path)
-                
-                if rel_path == '.':
-                    continue
+                if rel_path != '.':
+                    folders_to_create.append(rel_path)
+            
+            # Trier par profondeur pour créer les parents avant les enfants
+            folders_to_create.sort(key=lambda x: x.count(os.sep))
+            
+            for rel_path in folders_to_create:
+                if self.is_operation_cancelled():
+                    break
                 
                 parent_rel_path = os.path.dirname(rel_path)
                 if parent_rel_path == '.':
                     parent_rel_path = ''
                 
-                if parent_rel_path in folder_mapping:
-                    parent_drive_id = folder_mapping[parent_rel_path]
-                    folder_name = os.path.basename(root)
-                    
+                # Vérifier que le parent existe
+                if parent_rel_path not in folder_mapping:
+                    raise Exception(f"Dossier parent introuvable pour: {rel_path}")
+                
+                parent_drive_id = folder_mapping[parent_rel_path]
+                folder_name = os.path.basename(rel_path)
+                
+                # Validation du parent avant création
+                if not self._validate_parent_folder(parent_drive_id):
+                    raise Exception(f"ID parent invalide: {parent_drive_id}")
+                
+                try:
                     self.update_status(f"📁 Création: {rel_path}")
                     folder_id = self.drive_client.create_folder(
                         folder_name, parent_drive_id, self.is_shared_drive
                     )
                     folder_mapping[rel_path] = folder_id
                     
+                except Exception as e:
+                    error_msg = f"Erreur création dossier '{rel_path}': {str(e)}"
+                    self.update_status(f"❌ {error_msg}")
+                    raise Exception(error_msg)
+                    
         except Exception as e:
-            raise Exception(f"Erreur création dossiers: {str(e)}")
+            raise Exception(f"Erreur création structure: {str(e)}")
         
         return folder_mapping
+    
+    def _validate_parent_folder(self, parent_id: str) -> bool:
+        """Valide qu'un ID correspond bien à un dossier valide"""
+        if parent_id == 'root':
+            return True
+        
+        try:
+            metadata = self.drive_client.get_file_metadata(parent_id)
+            mime_type = metadata.get('mimeType', '')
+            return mime_type == 'application/vnd.google-apps.folder'
+        except Exception as e:
+            print(f"❌ Validation parent échouée pour {parent_id}: {e}")
+            return False
     
     def _upload_files_parallel(self, files: List[Dict[str, Any]], folder_mapping: Dict[str, str]) -> None:
         """Upload les fichiers en parallèle avec suivi détaillé"""
