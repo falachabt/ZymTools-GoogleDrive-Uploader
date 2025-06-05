@@ -1571,26 +1571,23 @@ class DriveExplorerMainWindow(QMainWindow):
 
             for file_path in file_paths:
                 if os.path.isfile(file_path):
-                    upload_thread = UploadThread(
-                        self.drive_client, file_path, destination_id,
-                        is_shared_drive, self.transfer_manager
+                    # Utiliser le gestionnaire de threads avec file d'attente
+                    thread_id = self.thread_manager.queue_file_upload(
+                        file_path, destination_id, is_shared_drive, priority=1
                     )
-                    upload_thread.progress_signal.connect(self.update_progress)
-                    upload_thread.completed_signal.connect(self.upload_completed)
-                    upload_thread.error_signal.connect(self.upload_error)
-                    upload_thread.status_signal.connect(self.update_status)
-                    upload_thread.time_signal.connect(self.update_upload_time)
-                    self.upload_threads.append(upload_thread)
-                    upload_thread.start()
+                    self.update_status(f"📤 Upload en file d'attente: {os.path.basename(file_path)}")
 
                 elif os.path.isdir(file_path):
-                    folder_upload_thread = FolderUploadThread(
-                        self.drive_client, file_path, destination_id,
-                        is_shared_drive, self.transfer_manager
+                    # Utiliser le gestionnaire de threads pour les dossiers
+                    thread_id = self.thread_manager.queue_folder_upload(
+                        file_path, destination_id, is_shared_drive, priority=1, max_workers=2
                     )
-                    folder_upload_thread.progress_signal.connect(self.update_progress)
-                    folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
-                    folder_upload_thread.error_signal.connect(self.upload_error)
+                    self.update_status(f"📁 Upload dossier en file d'attente: {os.path.basename(file_path)}")
+                    
+                # Afficher le statut de la file d'attente
+                queue_status = self.thread_manager.get_queue_status()
+                status_msg = f"File d'attente: {queue_status['uploads_queued']} uploads, {queue_status['active_uploads']}/{queue_status['max_concurrent_uploads']} actifs"
+                self.update_status(status_msg).connect(self.upload_error)
                     folder_upload_thread.status_signal.connect(self.update_status)
                     folder_upload_thread.time_signal.connect(self.update_upload_time)
                     self.folder_upload_threads.append(folder_upload_thread)
