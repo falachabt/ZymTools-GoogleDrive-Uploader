@@ -6,7 +6,7 @@ avec instances API séparées et gestion des files d'attente
 
 import time
 import threading
-from typing import Dict, List, Optional, Queue
+from typing import Dict, List, Optional
 from queue import Queue as ThreadQueue
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer, QMutex, QMutexLocker
 
@@ -359,7 +359,7 @@ class ThreadManager(QObject):
             time.sleep(0.1)
             self.cleanup_finished_threads()
         
-        print(f"✅ Gestionnaire de threads arrêté ({len(self.active_threads)} threads restants)")Thread
+        print(f"✅ Gestionnaire de threads arrêté ({len(self.active_threads)} threads restants)")
 
 
 class ThreadManager(QObject):
