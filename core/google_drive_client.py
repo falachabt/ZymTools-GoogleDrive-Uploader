@@ -263,9 +263,10 @@ class GoogleDriveClient:
     def upload_file(self, file_path: str, parent_id: str = 'root',
                     progress_callback: Optional[pyqtSignal] = None,
                     status_callback: Optional[pyqtSignal] = None,
-                    is_shared_drive: bool = False) -> str:
+                    is_shared_drive: bool = False,
+                    max_retries: int = 3) -> str:
         """
-        Upload un fichier vers Google Drive
+        Upload un fichier vers Google Drive avec retry automatique
 
         Args:
             file_path: Chemin du fichier local
@@ -273,6 +274,7 @@ class GoogleDriveClient:
             progress_callback: Callback pour le progrès
             status_callback: Callback pour le statut
             is_shared_drive: True si c'est un Shared Drive
+            max_retries: Nombre maximum de tentatives
 
         Returns:
             ID du fichier uploadé
@@ -283,73 +285,147 @@ class GoogleDriveClient:
             'parents': [parent_id]
         }
 
-        if status_callback:
-            status_callback.emit(f"⬆️ Upload: {file_name}")
+        for attempt in range(max_retries + 1):
+            try:
+                if status_callback:
+                    retry_text = f" (tentative {attempt + 1}/{max_retries + 1})" if attempt > 0 else ""
+                    status_callback.emit(f"⬆️ Upload: {file_name}{retry_text}")
 
-        media = MediaFileUpload(file_path, resumable=True, chunksize=UPLOAD_CHUNK_SIZE)
+                media = MediaFileUpload(file_path, resumable=True, chunksize=UPLOAD_CHUNK_SIZE)
 
-        try:
-            request = self.service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id',
-                supportsAllDrives=True
-            )
-        except Exception as e:
-            print(f"Erreur lors de la création de la requête d'upload: {str(e)}")
-            request = self.service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id'
-            )
+                try:
+                    request = self.service.files().create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields='id',
+                        supportsAllDrives=True
+                    )
+                except Exception as e:
+                    print(f"Erreur lors de la création de la requête d'upload: {str(e)}")
+                    request = self.service.files().create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields='id'
+                    )
 
-        response = None
-        file_size = os.path.getsize(file_path)
-        uploaded = 0
+                response = None
+                file_size = os.path.getsize(file_path)
+                uploaded = 0
 
-        while response is None:
-            status, response = request.next_chunk()
-            if status:
-                uploaded += UPLOAD_CHUNK_SIZE
-                progress = min(int((uploaded / file_size) * 100), 100)
-                if progress_callback:
-                    progress_callback.emit(progress)
+                while response is None:
+                    try:
+                        status, response = request.next_chunk()
+                        if status:
+                            uploaded += UPLOAD_CHUNK_SIZE
+                            progress = min(int((uploaded / file_size) * 100), 100)
+                            if progress_callback:
+                                progress_callback.emit(progress)
+                    except Exception as chunk_error:
+                        if "SSL" in str(chunk_error) or "Remote end closed" in str(chunk_error):
+                            print(f"❌ Erreur SSL/connexion chunk pour {file_name}: {chunk_error}")
+                            raise chunk_error
+                        else:
+                            print(f"❌ Erreur chunk non-SSL pour {file_name}: {chunk_error}")
+                            raise chunk_error
 
-        return response.get('id')
+                return response.get('id')
+
+            except Exception as e:
+                error_msg = str(e)
+                is_ssl_error = any(keyword in error_msg.lower() for keyword in 
+                                 ['ssl', 'remote end closed', 'connection', 'timeout'])
+                
+                if is_ssl_error and attempt < max_retries:
+                    wait_time = (attempt + 1) * 2  # Attente progressive
+                    print(f"⚠️ Erreur SSL détectée pour {file_name}, retry dans {wait_time}s...")
+                    
+                    if status_callback:
+                        status_callback.emit(f"🔄 Retry SSL: {file_name} dans {wait_time}s")
+                    
+                    time.sleep(wait_time)
+                    
+                    # Recréer le service pour éviter les problèmes SSL persistants
+                    try:
+                        self.service = self._get_drive_service()
+                        print(f"🔧 Service Google Drive recréé pour {file_name}")
+                    except Exception as service_error:
+                        print(f"❌ Erreur recréation service: {service_error}")
+                    
+                    continue
+                else:
+                    # Erreur finale ou non-SSL
+                    final_error = f"Upload échoué après {attempt + 1} tentatives: {error_msg}"
+                    print(f"❌ {final_error}")
+                    raise Exception(final_error)
+
+        # Ne devrait jamais arriver
+        raise Exception(f"Upload échoué après {max_retries + 1} tentatives")
 
     def create_folder(self, folder_name: str, parent_id: str = 'root',
-                      is_shared_drive: bool = False) -> str:
+                      is_shared_drive: bool = False, max_retries: int = 2) -> str:
         """
-        Crée un dossier dans Google Drive
+        Crée un dossier dans Google Drive avec validation et retry
 
         Args:
             folder_name: Nom du dossier
             parent_id: ID du dossier parent
             is_shared_drive: True si c'est un Shared Drive
+            max_retries: Nombre maximum de tentatives
 
         Returns:
             ID du dossier créé
         """
+        # Validation du parent
+        if parent_id != 'root':
+            try:
+                parent_metadata = self.get_file_metadata(parent_id)
+                if parent_metadata.get('mimeType') != 'application/vnd.google-apps.folder':
+                    raise Exception(f"Le parent {parent_id} n'est pas un dossier valide")
+            except Exception as e:
+                raise Exception(f"Validation du parent échouée: {str(e)}")
+
         file_metadata = {
             'name': folder_name,
             'mimeType': 'application/vnd.google-apps.folder',
             'parents': [parent_id]
         }
 
-        try:
-            folder = self.service.files().create(
-                body=file_metadata,
-                fields='id',
-                supportsAllDrives=True
-            ).execute()
-        except Exception as e:
-            print(f"Erreur lors de la création du dossier: {str(e)}")
-            folder = self.service.files().create(
-                body=file_metadata,
-                fields='id'
-            ).execute()
+        for attempt in range(max_retries + 1):
+            try:
+                try:
+                    folder = self.service.files().create(
+                        body=file_metadata,
+                        fields='id',
+                        supportsAllDrives=True
+                    ).execute()
+                except Exception as e:
+                    print(f"Erreur avec supportsAllDrives, retry sans: {str(e)}")
+                    folder = self.service.files().create(
+                        body=file_metadata,
+                        fields='id'
+                    ).execute()
 
-        return folder.get('id')
+                folder_id = folder.get('id')
+                if folder_id:
+                    print(f"✅ Dossier créé: {folder_name} (ID: {folder_id})")
+                    return folder_id
+                else:
+                    raise Exception("ID de dossier vide retourné")
+
+            except Exception as e:
+                error_msg = str(e)
+                
+                if attempt < max_retries:
+                    wait_time = (attempt + 1) * 1
+                    print(f"⚠️ Erreur création dossier {folder_name}, retry dans {wait_time}s: {error_msg}")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    final_error = f"Création dossier échouée après {attempt + 1} tentatives: {error_msg}"
+                    print(f"❌ {final_error}")
+                    raise Exception(final_error)
+
+        raise Exception(f"Création dossier échouée après {max_retries + 1} tentatives")
 
     def rename_item(self, file_id: str, new_name: str) -> Dict[str, Any]:
         """

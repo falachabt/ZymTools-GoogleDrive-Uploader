@@ -1,83 +1,42 @@
 """
-Configuration générale de l'application Google Drive Explorer
+Configuration globale de l'application
 """
 
-
 import os
-import sys
+import time
+from pathlib import Path
 
-# Configuration de l'API Google Drive
-SCOPES = ['https://www.googleapis.com/auth/drive']
+# Configuration de l'application
+APP_NAME = "Google Drive Manager"
+APP_VERSION = "2.0.0"
 
-# Paramètres de cache
-CACHE_MAX_AGE_MINUTES = 10
-CACHE_CLEANUP_INTERVAL_MS = 60000  # 1 minute
+# Configuration Google Drive
+SCOPES = [
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/drive.file'
+]
 
-# Paramètres d'interface
-WINDOW_TITLE = "ZymTools - Google Drive Explorer Stylé"
-WINDOW_WIDTH = 1400
-WINDOW_HEIGHT = 900
+# Taille des chunks pour l'upload (8MB)
+UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 
-# Tailles des chunks pour upload/download
-UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1MB
-DOWNLOAD_CHUNK_SIZE = 1024 * 1024  # 1MB
+# Configuration des threads
+MAX_CONCURRENT_UPLOADS = 3
+MAX_CONCURRENT_DOWNLOADS = 2
 
-# Paramètres de la barre d'outils
-TOOLBAR_ICON_SIZE = (24, 24)
+# Configuration retry et timeouts
+MAX_UPLOAD_RETRIES = 3
+MAX_FOLDER_RETRIES = 2
+SSL_RETRY_DELAY = 2  # secondes
 
-# Extensions de fichiers et leurs émojis
-FILE_EMOJIS = {
-    'application/vnd.google-apps.document': '📝',
-    'application/vnd.google-apps.spreadsheet': '📊',
-    'application/vnd.google-apps.presentation': '📽️',
-    'application/vnd.google-apps.form': '📋',
-    'application/vnd.google-apps.drawing': '🎨',
-    'application/pdf': '📕',
-    'image/jpeg': '🖼️',
-    'image/png': '🖼️',
-    'image/gif': '🖼️',
-    'text/plain': '📄',
-    'text/html': '🌐',
-    'application/zip': '📦',
-    'video/mp4': '🎥',
-    'video/': '🎥',
-    'audio/mpeg': '🎵',
-    'audio/': '🎵',
-}
+# Chemins des fichiers de configuration
+RESOURCES_DIR = Path(__file__).parent.parent / "resources"
+CREDENTIALS_FILENAME = "credentials.json"
+TOKEN_FILENAME = "token.pickle"
 
-# Types de fichiers et leurs descriptions
-FILE_TYPES = {
-    'application/vnd.google-apps.document': '📝 Doc Google',
-    'application/vnd.google-apps.spreadsheet': '📊 Sheets Google',
-    'application/vnd.google-apps.presentation': '📽️ Slides Google',
-    'application/vnd.google-apps.form': '📋 Form Google',
-    'application/vnd.google-apps.drawing': '🎨 Drawing Google',
-    'application/pdf': '📕 PDF',
-    'image/jpeg': '🖼️ JPEG',
-    'image/png': '🖼️ PNG',
-    'image/gif': '🖼️ GIF',
-    'text/plain': '📄 Texte',
-    'text/html': '🌐 HTML',
-    'application/zip': '📦 ZIP',
-    'video/mp4': '🎥 MP4',
-    'audio/mpeg': '🎵 MP3'
-}
-
-def get_resource_path(relative_path):
-    """
-    Obtient le chemin absolu vers une ressource,
-    fonctionne pour le développement et PyInstaller
-    """
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
-def get_credentials_path():
+def get_credentials_path() -> str:
     """Retourne le chemin vers le fichier credentials.json"""
-    return get_resource_path('resources/credentials.json')
+    return str(RESOURCES_DIR / CREDENTIALS_FILENAME)
 
-def get_token_path():
+def get_token_path() -> str:
     """Retourne le chemin vers le fichier token.pickle"""
-    return get_resource_path('resources/token.pickle')
+    return str(RESOURCES_DIR / TOKEN_FILENAME)
