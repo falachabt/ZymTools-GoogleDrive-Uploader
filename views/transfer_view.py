@@ -379,16 +379,16 @@ class TransferPanel(QWidget):
                 transfer = self.transfer_manager.get_transfer(transfer_id)
                 if transfer:
                     # Activer/désactiver selon le statut
-                    self.pause_action.setEnabled(transfer.status == TransferStatus.IN_PROGRESS)
-                    self.resume_action.setEnabled(transfer.status == TransferStatus.PAUSED)
+                    #self.pause_action.setEnabled(transfer.status == TransferStatus.IN_PROGRESS)
+                    #self.resume_action.setEnabled(transfer.status == TransferStatus.PAUSED)
                     self.cancel_action.setEnabled(transfer.status in [
                         TransferStatus.PENDING, TransferStatus.IN_PROGRESS, TransferStatus.PAUSED
                     ])
                     return
 
         # Pas de sélection ou transfert invalide
-        self.pause_action.setEnabled(False)
-        self.resume_action.setEnabled(False)
+        #self.pause_action.setEnabled(False)
+        s#elf.resume_action.setEnabled(False)
         self.cancel_action.setEnabled(False)
 
     def get_transfer_count(self) -> int:

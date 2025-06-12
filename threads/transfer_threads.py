@@ -21,13 +21,19 @@ class SafeGoogleDriveUploader:
     _upload_lock = threading.Lock()
     _last_upload_time = 0
     _upload_count = 0
-    _rate_limit_window = 60  # 1 minute
-    _max_uploads_per_window = 100  # Maximum 100 uploads par minute
+    _rate_limit_window = 3  # 1 minute
+    _max_uploads_per_window = 700  # Maximum 100 uploads par minute
+
+    @staticmethod
+    def get_fresh_client():
+        """Crée une nouvelle instance de client Google Drive"""
+        from core.google_drive_client import GoogleDriveClient
+        return GoogleDriveClient()
 
     @classmethod
-    def safe_upload_file(cls, drive_client: GoogleDriveClient, file_path: str,
-                        parent_id: str, is_shared_drive: bool = False,
-                        max_retries: int = 3) -> str:
+    def safe_upload_file(cls, file_path: str,
+                         parent_id: str, is_shared_drive: bool = False,
+                         max_retries: int = 3) -> str:
         """
         Upload sécurisé d'un fichier avec retry et rate limiting
 
@@ -66,13 +72,19 @@ class SafeGoogleDriveUploader:
 
                 # Ajouter un délai aléatoire pour éviter les collisions
                 if attempt > 0:
-                    time.sleep(random.uniform(0.5, 2.0) * attempt)
+                    time.sleep(random.uniform(0.05, 0.08) * attempt)
 
-                # Tentative d'upload
-                file_id = drive_client.upload_file(
-                    file_path, parent_id, None, None, is_shared_drive
-                )
-                return file_id
+                # Tentative d'upload avec un nouveau client
+                drive_client = cls.get_fresh_client()
+                try:
+                    file_id = drive_client.upload_file(
+                        file_path, parent_id, None, None, is_shared_drive
+                    )
+                    return file_id
+                except Exception as e:
+                    # Fermer le client en cas d'erreur
+                    drive_client.close()
+                    raise e
 
             except Exception as e:
                 error_msg = str(e).lower()
@@ -147,8 +159,8 @@ class UploadThread(QThread):
 
             # Upload sécurisé avec retry
             file_id = SafeGoogleDriveUploader.safe_upload_file(
-                self.drive_client, self.file_path, self.parent_id,
-                self.is_shared_drive, max_retries=3
+                self.file_path, self.parent_id,
+                self.is_shared_drive
             )
 
             if not self.is_cancelled:
@@ -193,7 +205,7 @@ class SafeFolderUploadThread(QThread):
     def __init__(self, drive_client: GoogleDriveClient, folder_path: str,
                  parent_id: str = 'root', is_shared_drive: bool = False,
                  transfer_manager: Optional[TransferManager] = None,
-                 max_parallel_uploads: int = 1):  # Par défaut 1 pour la sécurité
+                 max_parallel_uploads: int = 3):  # Par défaut 1 pour la sécurité
         """
         Initialise le thread d'upload de dossier sécurisé
 
@@ -212,7 +224,7 @@ class SafeFolderUploadThread(QThread):
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
         # Limiter à un maximum sécurisé
-        self.max_parallel_uploads = min(max_parallel_uploads, 2)
+        self.max_parallel_uploads = max(max_parallel_uploads, 10)
         self.total_files = 0
         self.uploaded_files = 0
         self.failed_files = 0
@@ -232,12 +244,13 @@ class SafeFolderUploadThread(QThread):
         try:
             for root, dirs, files in os.walk(path):
                 for file in files:
-                    file_path = os.path.join(root, file)
-                    try:
-                        count += 1
-                        total_size += os.path.getsize(file_path)
-                    except (OSError, IOError):
-                        pass
+                    if not file.lower().endswith('.tif'):
+                        file_path = os.path.join(root, file)
+                        try:
+                            count += 1
+                            total_size += os.path.getsize(file_path)
+                        except (OSError, IOError):
+                            pass
         except Exception:
             pass
         return count, total_size
@@ -251,14 +264,15 @@ class SafeFolderUploadThread(QThread):
                 rel_path = os.path.relpath(root, folder_path)
 
                 for file in files:
-                    file_path = os.path.join(root, file)
-                    if os.path.exists(file_path):
-                        files_to_process.append({
-                            'file_path': file_path,
-                            'file_name': file,
-                            'relative_dir': rel_path if rel_path != '.' else '',
-                            'size': os.path.getsize(file_path)
-                        })
+                    if not file.lower().endswith('.tif'):
+                        file_path = os.path.join(root, file)
+                        if os.path.exists(file_path):
+                            files_to_process.append({
+                                'file_path': file_path,
+                                'file_name': file,
+                                'relative_dir': rel_path if rel_path != '.' else '',
+                                'size': os.path.getsize(file_path)
+                            })
         except Exception as e:
             print(f"Erreur lors de la collecte des fichiers: {e}")
 
@@ -329,8 +343,8 @@ class SafeFolderUploadThread(QThread):
 
                 # Upload sécurisé avec retry
                 file_id = SafeGoogleDriveUploader.safe_upload_file(
-                    self.drive_client, file_info['file_path'],
-                    parent_id, self.is_shared_drive, max_retries=3
+                    file_info['file_path'], parent_id,
+                    self.is_shared_drive
                 )
 
                 return {
@@ -386,7 +400,7 @@ class SafeFolderUploadThread(QThread):
 
                 # Délai entre uploads pour éviter le rate limiting
                 if not self.is_cancelled:
-                    time.sleep(0.1)  # 100ms entre chaque fichier
+                    time.sleep(0.001)  # 100ms entre chaque fichier
         else:
             # Upload parallèle très limité et sécurisé
             with ThreadPoolExecutor(max_workers=self.max_parallel_uploads) as executor:
@@ -401,7 +415,7 @@ class SafeFolderUploadThread(QThread):
 
                     # Délai entre soumissions pour éviter la surcharge
                     if i < len(file_batch) - 1:
-                        time.sleep(0.5)
+                        time.sleep(0.003)
 
                 # Traiter les résultats
                 for future in as_completed(futures):
@@ -481,7 +495,7 @@ class SafeFolderUploadThread(QThread):
             all_files = self.collect_all_files(self.folder_path)
 
             # Upload avec batch plus petits pour la sécurité
-            batch_size = max(1, min(5, len(all_files)))  # Batch très petit
+            batch_size = max(1, min(100, len(all_files)))  # Batch très petit
             file_batches = [all_files[i:i + batch_size] for i in range(0, len(all_files), batch_size)]
 
             self.status_signal.emit(f"⚡ Upload: {self.total_files} fichiers (mode: {'séquentiel' if self.max_parallel_uploads == 1 else 'parallèle limité'})...")
@@ -503,7 +517,7 @@ class SafeFolderUploadThread(QThread):
 
                 # Délai entre batches pour éviter la surcharge
                 if i < len(file_batches) - 1 and not self.is_cancelled:
-                    time.sleep(1.0)  # 1 seconde entre batches
+                    time.sleep(0.0003)  # 1 seconde entre batches
 
             if not self.is_cancelled:
                 # Rapport final
