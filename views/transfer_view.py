@@ -4,8 +4,7 @@ Vue pour afficher et gérer la liste des transferts
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView,
                              QPushButton, QToolBar, QAction, QLabel,
-                             QProgressBar, QSplitter, QGroupBox, QMenu,
-                             QHeaderView, QAbstractItemView)
+                             QProgressBar,  QMenu, QAbstractItemView)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize
 from PyQt5.QtGui import QFont
 
@@ -159,6 +158,7 @@ class TransferPanel(QWidget):
             transfer_manager: Gestionnaire de transferts
         """
         super().__init__()
+        self.pause_action = None
         self.transfer_manager = transfer_manager
 
 
@@ -379,16 +379,16 @@ class TransferPanel(QWidget):
                 transfer = self.transfer_manager.get_transfer(transfer_id)
                 if transfer:
                     # Activer/désactiver selon le statut
-                    self.pause_action.setEnabled(transfer.status == TransferStatus.IN_PROGRESS)
-                    self.resume_action.setEnabled(transfer.status == TransferStatus.PAUSED)
+                    #self.pause_action.setEnabled(transfer.status == TransferStatus.IN_PROGRESS)
+                    #self.resume_action.setEnabled(transfer.status == TransferStatus.PAUSED)
                     self.cancel_action.setEnabled(transfer.status in [
                         TransferStatus.PENDING, TransferStatus.IN_PROGRESS, TransferStatus.PAUSED
                     ])
                     return
 
         # Pas de sélection ou transfert invalide
-        self.pause_action.setEnabled(False)
-        self.resume_action.setEnabled(False)
+        # self.pause_action.setEnabled(False)
+        # self.resume_action.setEnabled(False)
         self.cancel_action.setEnabled(False)
 
     def get_transfer_count(self) -> int:

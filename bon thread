@@ -21,8 +21,8 @@ class SafeGoogleDriveUploader:
     _upload_lock = threading.Lock()
     _last_upload_time = 0
     _upload_count = 0
-    _rate_limit_window = 3  # 1 minute
-    _max_uploads_per_window = 700  # Maximum 100 uploads par minute
+    _rate_limit_window = 60  # 1 minute
+    _max_uploads_per_window = 100  # Maximum 100 uploads par minute
 
     @staticmethod
     def get_fresh_client():
@@ -157,7 +157,7 @@ class UploadThread(QThread):
         try:
             self.status_signal.emit(f"⬆️ Préparation: {file_name}")
 
-            # Upload sécurisé avec retry  
+            # Upload sécurisé avec retry
             file_id = SafeGoogleDriveUploader.safe_upload_file(
                 self.file_path, self.parent_id,
                 self.is_shared_drive
@@ -224,7 +224,7 @@ class SafeFolderUploadThread(QThread):
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
         # Limiter à un maximum sécurisé
-        self.max_parallel_uploads = max(max_parallel_uploads, 20)
+        self.max_parallel_uploads = max(max_parallel_uploads, 15)
         self.total_files = 0
         self.uploaded_files = 0
         self.failed_files = 0
@@ -245,12 +245,6 @@ class SafeFolderUploadThread(QThread):
             for root, dirs, files in os.walk(path):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    extension = os.path.splitext(file)[1].lower()
-
-                    # Skip certain extensions
-                    if extension in ['.tmp', '.temp', '.DS_Store', '.tif']:
-                        continue
-
                     try:
                         count += 1
                         total_size += os.path.getsize(file_path)
@@ -270,12 +264,6 @@ class SafeFolderUploadThread(QThread):
 
                 for file in files:
                     file_path = os.path.join(root, file)
-                    extension = os.path.splitext(file)[1].lower()
-
-                    # Skip certain extensions
-                    if extension in ['.tmp', '.temp', '.DS_Store', '.tif']:
-                        continue
-
                     if os.path.exists(file_path):
                         files_to_process.append({
                             'file_path': file_path,
@@ -286,8 +274,6 @@ class SafeFolderUploadThread(QThread):
         except Exception as e:
             print(f"Erreur lors de la collecte des fichiers: {e}")
 
-        # Trier les fichiers par taille
-        files_to_process.sort(key=lambda x: x['size'], reverse=True)
         return files_to_process
 
     def create_folder_structure_safe(self, folder_path: str, parent_id: str) -> Dict[str, str]:
@@ -412,7 +398,7 @@ class SafeFolderUploadThread(QThread):
 
                 # Délai entre uploads pour éviter le rate limiting
                 if not self.is_cancelled:
-                    time.sleep(0.0001)  # 100ms entre chaque fichier
+                    time.sleep(0.01)  # 100ms entre chaque fichier
         else:
             # Upload parallèle très limité et sécurisé
             with ThreadPoolExecutor(max_workers=self.max_parallel_uploads) as executor:
@@ -427,7 +413,7 @@ class SafeFolderUploadThread(QThread):
 
                     # Délai entre soumissions pour éviter la surcharge
                     if i < len(file_batch) - 1:
-                        time.sleep(0.03)
+                        time.sleep(0.3)
 
                 # Traiter les résultats
                 for future in as_completed(futures):
@@ -503,13 +489,11 @@ class SafeFolderUploadThread(QThread):
             if self.is_cancelled:
                 return
 
-            # Collecter tous les fichiers triés par taille
+            # Collecter tous les fichiers
             all_files = self.collect_all_files(self.folder_path)
 
             # Upload avec batch plus petits pour la sécurité
-            batch_size = max(1, min(100, len(all_files)))  # Batch très petit
-
-            # Les fichiers sont déjà triés par taille dans collect_all_files
+            batch_size = max(1, min(30, len(all_files)))  # Batch très petit
             file_batches = [all_files[i:i + batch_size] for i in range(0, len(all_files), batch_size)]
 
             self.status_signal.emit(f"⚡ Upload: {self.total_files} fichiers (mode: {'séquentiel' if self.max_parallel_uploads == 1 else 'parallèle limité'})...")
@@ -531,7 +515,7 @@ class SafeFolderUploadThread(QThread):
 
                 # Délai entre batches pour éviter la surcharge
                 if i < len(file_batches) - 1 and not self.is_cancelled:
-                    time.sleep(0.03)  # 1 seconde entre batches
+                    time.sleep(0.3)  # 1 seconde entre batches
 
             if not self.is_cancelled:
                 # Rapport final

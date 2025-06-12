@@ -62,6 +62,13 @@ class GoogleDriveClient:
                 except Exception:
                     pass
 
+    def close(self) -> None:
+        """Ferme proprement la connexion au service Google Drive"""
+        if self.service:
+            self.service.close()
+            self.disconnect()
+            self.service = None
+
     def is_shared_drive(self, drive_id: str) -> bool:
         """
         Vérifie si un drive ID correspond à un Shared Drive
