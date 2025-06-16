@@ -293,6 +293,9 @@ class TransferListModel(QStandardItemModel):
         self.transfer_manager.transfer_updated.connect(self.on_transfer_updated)
         self.transfer_manager.transfer_removed.connect(self.on_transfer_removed)
 
+        # Dictionnaire pour suivre les transferts de dossiers et leurs fichiers
+        self.folder_transfers = {}
+
     def on_transfer_added(self, transfer_id: str) -> None:
         """Appelé quand un transfert est ajouté"""
         transfer = self.transfer_manager.get_transfer(transfer_id)
@@ -307,6 +310,18 @@ class TransferListModel(QStandardItemModel):
 
     def on_transfer_removed(self, transfer_id: str) -> None:
         """Appelé quand un transfert est supprimé"""
+        # Vérifier si c'est un transfert de dossier
+        if transfer_id in self.folder_transfers:
+            # Supprimer aussi les fichiers individuels
+            for child_row in self.folder_transfers[transfer_id]:
+                for row in range(self.rowCount()):
+                    item = self.item(row, 0)
+                    if item and item.data() == f"{transfer_id}_{child_row}":
+                        self.removeRow(row)
+                        break
+            # Supprimer l'entrée du dictionnaire
+            del self.folder_transfers[transfer_id]
+
         # Trouver et supprimer la ligne correspondante
         for row in range(self.rowCount()):
             item = self.item(row, 0)
@@ -352,6 +367,78 @@ class TransferListModel(QStandardItemModel):
         self.setItem(row, 6, size_item)
         self.setItem(row, 7, dest_item)
 
+        # Si c'est un transfert de dossier, ajouter les fichiers individuels
+        if transfer.transfer_type in [TransferType.UPLOAD_FOLDER, TransferType.DOWNLOAD_FOLDER]:
+            self.add_folder_files(transfer)
+
+    def add_folder_files(self, transfer: TransferItem) -> None:
+        """Ajoute les fichiers individuels d'un dossier"""
+        from utils.helpers import count_files_in_directory
+        import os
+
+        # Initialiser la liste des fichiers pour ce transfert
+        self.folder_transfers[transfer.transfer_id] = []
+
+        # Pour les uploads de dossier, lister les fichiers
+        if transfer.transfer_type == TransferType.UPLOAD_FOLDER and os.path.isdir(transfer.source_path):
+            files_to_add = []
+
+            # Parcourir le dossier et ajouter chaque fichier
+            for root, dirs, files in os.walk(transfer.source_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, transfer.source_path)
+
+                    # Ajouter à la liste des fichiers à traiter
+                    files_to_add.append({
+                        'name': file,
+                        'path': file_path,
+                        'rel_path': rel_path,
+                        'size': os.path.getsize(file_path) if os.path.exists(file_path) else 0
+                    })
+
+            # Ajouter chaque fichier au modèle
+            for i, file_info in enumerate(files_to_add):
+                row = self.rowCount()
+
+                # Créer un ID unique pour ce fichier dans le transfert
+                file_id = f"{transfer.transfer_id}_{i}"
+                self.folder_transfers[transfer.transfer_id].append(i)
+
+                # Fichier (avec indentation pour montrer la hiérarchie)
+                file_item = QStandardItem(f"  └─ {file_info['rel_path']}")
+                file_item.setData(file_id)
+
+                # Type (même que le parent)
+                type_item = QStandardItem(transfer.transfer_type.value)
+
+                # Statut (même que le parent)
+                status_item = QStandardItem(transfer.status.value)
+
+                # Progrès (même que le parent pour l'instant)
+                progress_item = QStandardItem(f"{transfer.progress}%")
+
+                # Vitesse (vide pour les fichiers individuels)
+                speed_item = QStandardItem("")
+
+                # ETA (vide pour les fichiers individuels)
+                eta_item = QStandardItem("")
+
+                # Taille
+                size_item = QStandardItem(format_file_size(file_info['size']))
+
+                # Destination (même que le parent)
+                dest_item = QStandardItem(transfer.destination_path)
+
+                self.setItem(row, 0, file_item)
+                self.setItem(row, 1, type_item)
+                self.setItem(row, 2, status_item)
+                self.setItem(row, 3, progress_item)
+                self.setItem(row, 4, speed_item)
+                self.setItem(row, 5, eta_item)
+                self.setItem(row, 6, size_item)
+                self.setItem(row, 7, dest_item)
+
     def update_transfer_row(self, transfer: TransferItem) -> None:
         """Met à jour une ligne de transfert"""
         # Trouver la ligne correspondante
@@ -363,6 +450,18 @@ class TransferListModel(QStandardItemModel):
                 self.item(row, 3).setText(f"{transfer.progress}%")
                 self.item(row, 4).setText(transfer.get_speed_text())
                 self.item(row, 5).setText(transfer.get_eta_text())
+
+                # Si c'est un transfert de dossier, mettre à jour aussi les fichiers individuels
+                if transfer.transfer_id in self.folder_transfers:
+                    for child_row in self.folder_transfers[transfer.transfer_id]:
+                        for r in range(self.rowCount()):
+                            child_item = self.item(r, 0)
+                            if child_item and child_item.data() == f"{transfer.transfer_id}_{child_row}":
+                                # Mettre à jour le statut et le progrès
+                                self.item(r, 2).setText(transfer.status.value)
+                                self.item(r, 3).setText(f"{transfer.progress}%")
+                                break
+
                 break
 
     def get_transfer_id_from_row(self, row: int) -> Optional[str]:
