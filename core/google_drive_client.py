@@ -62,6 +62,22 @@ class GoogleDriveClient:
                 except Exception:
                     pass
 
+    def close(self):
+        """Ferme proprement le client (pour éviter les erreurs dans les threads)"""
+        try:
+            # Ne rien faire de spécial, juste s'assurer qu'on peut appeler cette méthode
+            # sans erreur depuis les threads
+            pass
+        except Exception:
+            pass
+
+    def __del__(self):
+        """Nettoyage lors de la destruction"""
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def is_shared_drive(self, drive_id: str) -> bool:
         """
         Vérifie si un drive ID correspond à un Shared Drive

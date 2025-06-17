@@ -1,11 +1,12 @@
 """
-Modèles de données pour la gestion des transferts - VERSION OPTIMISÉE HAUTE PERFORMANCE
+Modèles de données pour la gestion des transferts - VERSION CORRIGÉE
 """
 
 import os
 import sqlite3
 import threading
 import queue
+import tempfile
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Any, Optional, List
@@ -113,7 +114,7 @@ class TransferItem:
 
 
 class TransferManager(QObject):
-    """Gestionnaire de transferts OPTIMISÉ pour gros volumes - VERSION HAUTE PERFORMANCE"""
+    """Gestionnaire de transferts CORRIGÉ - VERSION STABLE"""
 
     # Signaux existants (gardés)
     transfer_added = pyqtSignal(str)
@@ -126,11 +127,15 @@ class TransferManager(QObject):
     stats_updated = pyqtSignal(dict)  # {status: count} - compteurs rapides
 
     def __init__(self):
-        """Initialise le gestionnaire de transferts HAUTE PERFORMANCE"""
+        """Initialise le gestionnaire de transferts CORRIGÉ"""
         super().__init__()
 
-        # Storage hybride : SQLite + cache mémoire
-        self.db_path = ":memory:"  # Base en mémoire = ultra rapide
+        # CORRECTION : Utiliser un fichier temporaire au lieu de ":memory:"
+        # Cela évite le problème de connexions SQLite multiples
+        self.temp_db = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        self.db_path = self.temp_db.name
+        self.temp_db.close()  # Fermer le fichier pour permettre l'accès SQLite
+
         self.db_lock = threading.RLock()
         self._init_database()
 
@@ -161,36 +166,48 @@ class TransferManager(QObject):
 
         self._next_id = 1
 
-    def _init_database(self):
-        """Initialise SQLite avec index optimisés"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS transfers (
-                    transfer_id TEXT PRIMARY KEY,
-                    transfer_type TEXT NOT NULL,
-                    source_path TEXT NOT NULL,
-                    destination_path TEXT NOT NULL,
-                    file_name TEXT NOT NULL,
-                    file_size INTEGER DEFAULT 0,
-                    parent_transfer_id TEXT,
-                    status TEXT DEFAULT 'PENDING',
-                    progress INTEGER DEFAULT 0,
-                    speed REAL DEFAULT 0,
-                    error_message TEXT DEFAULT '',
-                    start_time REAL,
-                    end_time REAL,
-                    bytes_transferred INTEGER DEFAULT 0,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
-                )
-            """)
+    def __del__(self):
+        """Nettoyage lors de la destruction"""
+        try:
+            if hasattr(self, 'db_path') and os.path.exists(self.db_path):
+                os.unlink(self.db_path)
+        except:
+            pass
 
-            # Index pour les requêtes fréquentes
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON transfers(status)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_parent ON transfers(parent_transfer_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_type ON transfers(transfer_type)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_updated ON transfers(updated_at)")
-            conn.commit()
+    def _init_database(self):
+        """Initialise SQLite avec index optimisés - VERSION CORRIGÉE"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS transfers (
+                        transfer_id TEXT PRIMARY KEY,
+                        transfer_type TEXT NOT NULL,
+                        source_path TEXT NOT NULL,
+                        destination_path TEXT NOT NULL,
+                        file_name TEXT NOT NULL,
+                        file_size INTEGER DEFAULT 0,
+                        parent_transfer_id TEXT,
+                        status TEXT DEFAULT 'PENDING',
+                        progress INTEGER DEFAULT 0,
+                        speed REAL DEFAULT 0,
+                        error_message TEXT DEFAULT '',
+                        start_time REAL,
+                        end_time REAL,
+                        bytes_transferred INTEGER DEFAULT 0,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    )
+                """)
+
+                # Index pour les requêtes fréquentes
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON transfers(status)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_parent ON transfers(parent_transfer_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_type ON transfers(transfer_type)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_updated ON transfers(updated_at)")
+                conn.commit()
+                print("✅ Base de données transfers initialisée")
+        except Exception as e:
+            print(f"❌ Erreur initialisation base: {e}")
 
     def generate_transfer_id(self) -> str:
         """Génère un ID unique pour un transfert"""
@@ -202,7 +219,7 @@ class TransferManager(QObject):
                      destination_path: str, file_name: str, file_size: int = 0,
                      parent_transfer_id: str = None) -> str:
         """
-        Ajoute un nouveau transfert
+        Ajoute un nouveau transfert - VERSION SIMPLIFIÉE
 
         Args:
             transfer_type: Type de transfert
@@ -221,14 +238,37 @@ class TransferManager(QObject):
             destination_path, file_name, file_size, parent_transfer_id
         )
 
+        # Ajouter en cache mémoire
         self.transfers[transfer_id] = transfer
+
+        # Ajouter en base de données de façon sécurisée
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                now = datetime.now().timestamp()
+                conn.execute("""
+                    INSERT INTO transfers 
+                    (transfer_id, transfer_type, source_path, destination_path, file_name, 
+                     file_size, parent_transfer_id, status, progress, speed, error_message, 
+                     start_time, end_time, bytes_transferred, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    transfer_id, transfer_type.value, source_path, destination_path, file_name,
+                    file_size, parent_transfer_id, TransferStatus.PENDING.value, 0, 0, '',
+                    None, None, 0, now, now
+                ))
+                conn.commit()
+        except Exception as e:
+            print(f"❌ Erreur ajout transfert en base: {e}")
+
         self.fast_counts[TransferStatus.PENDING] += 1
         self.transfer_added.emit(transfer_id)
+        self.stats_updated.emit(self.fast_counts.copy())
+
         return transfer_id
 
     def add_folder_transfer_with_files(self, folder_path: str, destination_path: str,
                                        folder_name: str) -> tuple:
-        """VERSION OPTIMISÉE - Ajoute dossier + fichiers en BULK ultra-rapide"""
+        """VERSION SIMPLIFIÉE - Ajoute dossier + fichiers en mode sécurisé"""
 
         # 1. Créer le transfert principal du dossier (en mémoire)
         total_size = self._calculate_folder_size(folder_path)
@@ -242,7 +282,7 @@ class TransferManager(QObject):
         # Ajouter en cache mémoire
         self.transfers[folder_transfer_id] = folder_transfer
 
-        # 2. BULK INSERT - Collecter tous les fichiers d'un coup
+        # 2. Collecter tous les fichiers
         file_transfers_data = []
         file_transfer_ids = []
 
@@ -257,12 +297,20 @@ class TransferManager(QObject):
                             file_size = os.path.getsize(file_path)
                             file_transfer_id = self.generate_transfer_id()
 
+                            # Créer en mémoire
+                            file_transfer = TransferItem(
+                                file_transfer_id, TransferType.UPLOAD_FILE_IN_FOLDER,
+                                file_path, destination_path, rel_path, file_size, folder_transfer_id
+                            )
+                            self.transfers[file_transfer_id] = file_transfer
+
                             # Préparer pour bulk insert
                             now = datetime.now().timestamp()
                             file_transfers_data.append((
-                                file_transfer_id, 'UPLOAD_FILE_IN_FOLDER',
+                                file_transfer_id, TransferType.UPLOAD_FILE_IN_FOLDER.value,
                                 file_path, destination_path, rel_path, file_size,
-                                folder_transfer_id, 'PENDING', 0, 0, '', None, None, 0, now, now
+                                folder_transfer_id, TransferStatus.PENDING.value, 0, 0, '',
+                                None, None, 0, now, now
                             ))
 
                             file_transfer_ids.append(file_transfer_id)
@@ -274,15 +322,18 @@ class TransferManager(QObject):
 
         # 3. BULK INSERT en base (1 seule requête pour tous les fichiers)
         if file_transfers_data:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.executemany("""
-                    INSERT INTO transfers 
-                    (transfer_id, transfer_type, source_path, destination_path, file_name, 
-                     file_size, parent_transfer_id, status, progress, speed, error_message, 
-                     start_time, end_time, bytes_transferred, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, file_transfers_data)
-                conn.commit()
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.executemany("""
+                        INSERT INTO transfers 
+                        (transfer_id, transfer_type, source_path, destination_path, file_name, 
+                         file_size, parent_transfer_id, status, progress, speed, error_message, 
+                         start_time, end_time, bytes_transferred, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, file_transfers_data)
+                    conn.commit()
+            except Exception as e:
+                print(f"❌ Erreur bulk insert: {e}")
 
         # 4. Mettre à jour les compteurs rapidement
         self.fast_counts[TransferStatus.PENDING] += len(file_transfer_ids) + 1
@@ -299,7 +350,7 @@ class TransferManager(QObject):
 
         self.stats_updated.emit(self.fast_counts.copy())
 
-        print(f"✅ Dossier ajouté: {folder_name} ({len(file_transfer_ids)} fichiers en bulk)")
+        print(f"✅ Dossier ajouté: {folder_name} ({len(file_transfer_ids)} fichiers)")
         return folder_transfer_id, file_transfer_ids
 
     def _calculate_folder_size(self, folder_path: str) -> int:
@@ -319,8 +370,7 @@ class TransferManager(QObject):
 
     def update_transfer_progress(self, transfer_id: str, progress: int,
                                  bytes_transferred: int = 0, speed: float = 0) -> None:
-        """VERSION OPTIMISÉE - Queue les mises à jour pour traitement batch"""
-
+        """Met à jour le progrès d'un transfert"""
         # Mettre en queue pour traitement batch (évite les mises à jour individuelles coûteuses)
         update_data = {
             'progress': progress,
@@ -329,12 +379,13 @@ class TransferManager(QObject):
             'updated_at': datetime.now().timestamp()
         }
 
+        self.speed = speed  # Mettre à jour la vitesse globale
+
         self.update_queue.put(('progress', transfer_id, update_data))
 
     def update_transfer_status(self, transfer_id: str, status: TransferStatus,
                                error_message: str = "") -> None:
-        """VERSION OPTIMISÉE - Queue les changements de statut"""
-
+        """Met à jour le statut d'un transfert"""
         update_data = {
             'status': status.value,
             'error_message': error_message,
@@ -351,7 +402,7 @@ class TransferManager(QObject):
         self.update_queue.put(('status', transfer_id, update_data))
 
     def _process_batch_updates(self) -> None:
-        """Traite toutes les mises à jour en batch - HAUTE PERFORMANCE"""
+        """Traite toutes les mises à jour en batch - VERSION SÉCURISÉE"""
         updates = []
         status_changes = []
 
@@ -410,7 +461,14 @@ class TransferManager(QObject):
 
         # Mise à jour DB par batch (1 transaction pour tout)
         if db_updates:
-            self._batch_update_database(db_updates)
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    for set_clauses, values in db_updates:
+                        sql = f"UPDATE transfers SET {', '.join(set_clauses)} WHERE transfer_id = ?"
+                        conn.execute(sql, values)
+                    conn.commit()
+            except Exception as e:
+                print(f"❌ Erreur mise à jour batch DB: {e}")
 
         # Émettre signaux groupés
         if updated_ids:
@@ -428,14 +486,6 @@ class TransferManager(QObject):
                 transfer = self.transfers[transfer_id]
                 if transfer.parent_transfer_id:
                     self._update_parent_folder_progress(transfer.parent_transfer_id)
-
-    def _batch_update_database(self, updates: List[tuple]) -> None:
-        """Met à jour la base par batch (1 transaction)"""
-        with sqlite3.connect(self.db_path) as conn:
-            for set_clauses, values in updates:
-                sql = f"UPDATE transfers SET {', '.join(set_clauses)} WHERE transfer_id = ?"
-                conn.execute(sql, values)
-            conn.commit()
 
     def _update_parent_folder_progress(self, folder_transfer_id: str) -> None:
         """Met à jour le progrès d'un dossier basé sur ses fichiers individuels"""
@@ -489,77 +539,88 @@ class TransferManager(QObject):
                 child_transfers[tid] = transfer
 
         # Compléter avec la DB si nécessaire
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                SELECT transfer_id, transfer_type, source_path, destination_path, file_name, 
-                       file_size, parent_transfer_id, status, progress, speed, error_message
-                FROM transfers 
-                WHERE parent_transfer_id = ?
-            """, (parent_transfer_id,))
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT transfer_id, transfer_type, source_path, destination_path, file_name, 
+                           file_size, parent_transfer_id, status, progress, speed, error_message
+                    FROM transfers 
+                    WHERE parent_transfer_id = ?
+                """, (parent_transfer_id,))
 
-            for row in cursor.fetchall():
-                transfer_id = row[0]
-                if transfer_id not in child_transfers:
-                    # Créer TransferItem depuis DB
-                    transfer = TransferItem(
-                        transfer_id, TransferType(row[1]), row[2], row[3], row[4],
-                        row[5], row[6]
-                    )
-                    transfer.status = TransferStatus(row[7])
-                    transfer.progress = row[8]
-                    transfer.speed = row[9]
-                    transfer.error_message = row[10]
-                    child_transfers[transfer_id] = transfer
+                for row in cursor.fetchall():
+                    transfer_id = row[0]
+                    if transfer_id not in child_transfers:
+                        # Créer TransferItem depuis DB
+                        transfer = TransferItem(
+                            transfer_id, TransferType(row[1]), row[2], row[3], row[4],
+                            row[5], row[6]
+                        )
+                        transfer.status = TransferStatus(row[7])
+                        transfer.progress = row[8]
+                        transfer.speed = row[9]
+                        transfer.error_message = row[10]
+                        child_transfers[transfer_id] = transfer
+        except Exception as e:
+            print(f"❌ Erreur get_child_transfers: {e}")
 
         return child_transfers
 
     def get_individual_file_transfers(self) -> Dict[str, TransferItem]:
-        """VERSION OPTIMISÉE - Charge depuis DB seulement si nécessaire"""
-
-        # Si peu de transferts, utiliser le cache mémoire
-        if len(self.transfers) < 1000:
-            return {tid: t for tid, t in self.transfers.items() if t.is_individual_file()}
-
-        # Pour gros volumes, requête optimisée depuis DB
+        """VERSION SIMPLIFIÉE - Charge depuis cache et DB"""
         individual_files = {}
 
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                SELECT transfer_id, transfer_type, source_path, destination_path, file_name, 
-                       file_size, parent_transfer_id, status, progress, speed, error_message
-                FROM transfers 
-                WHERE parent_transfer_id IS NOT NULL
-                ORDER BY updated_at DESC
-                LIMIT 2000
-            """)
+        # D'abord les transferts en cache
+        for tid, transfer in self.transfers.items():
+            if transfer.is_individual_file():
+                individual_files[tid] = transfer
 
-            for row in cursor.fetchall():
-                transfer_id = row[0]
-                # Créer TransferItem léger depuis DB
-                transfer = TransferItem(
-                    transfer_id, TransferType(row[1]), row[2], row[3], row[4],
-                    row[5], row[6]
-                )
-                transfer.status = TransferStatus(row[7])
-                transfer.progress = row[8]
-                transfer.speed = row[9]
-                transfer.error_message = row[10]
+        # Puis compléter avec la DB (limité à 1000 pour éviter le lag)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT transfer_id, transfer_type, source_path, destination_path, file_name, 
+                           file_size, parent_transfer_id, status, progress, speed, error_message
+                    FROM transfers 
+                    WHERE parent_transfer_id IS NOT NULL
+                    ORDER BY updated_at DESC
+                    LIMIT 1000
+                """)
 
-                individual_files[transfer_id] = transfer
+                for row in cursor.fetchall():
+                    transfer_id = row[0]
+                    if transfer_id not in individual_files:
+                        # Créer TransferItem léger depuis DB
+                        transfer = TransferItem(
+                            transfer_id, TransferType(row[1]), row[2], row[3], row[4],
+                            row[5], row[6]
+                        )
+                        transfer.status = TransferStatus(row[7])
+                        transfer.progress = row[8]
+                        transfer.speed = row[9]
+                        transfer.error_message = row[10]
+
+                        individual_files[transfer_id] = transfer
+        except Exception as e:
+            print(f"❌ Erreur get_individual_file_transfers: {e}")
 
         return individual_files
 
     def get_transfers_by_status_fast(self, status: TransferStatus, limit: int = 1000) -> List[str]:
         """Récupère rapidement les IDs par statut (pour l'affichage)"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                SELECT transfer_id FROM transfers 
-                WHERE status = ? AND parent_transfer_id IS NOT NULL
-                ORDER BY updated_at DESC 
-                LIMIT ?
-            """, (status.value, limit))
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT transfer_id FROM transfers 
+                    WHERE status = ? AND parent_transfer_id IS NOT NULL
+                    ORDER BY updated_at DESC 
+                    LIMIT ?
+                """, (status.value, limit))
 
-            return [row[0] for row in cursor.fetchall()]
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"❌ Erreur get_transfers_by_status_fast: {e}")
+            return []
 
     def _auto_cleanup_completed(self) -> None:
         """Nettoyage automatique intelligent"""
@@ -567,26 +628,29 @@ class TransferManager(QObject):
 
         # Si plus de 2000 fichiers terminés, nettoyer automatiquement
         if total_transfers > 2000:
-            with sqlite3.connect(self.db_path) as conn:
-                # Garder seulement les 500 plus récents
-                cursor = conn.execute("""
-                    DELETE FROM transfers 
-                    WHERE status = 'COMPLETED' AND parent_transfer_id IS NOT NULL
-                    AND transfer_id NOT IN (
-                        SELECT transfer_id FROM transfers 
-                        WHERE status = 'COMPLETED' AND parent_transfer_id IS NOT NULL
-                        ORDER BY updated_at DESC 
-                        LIMIT 500
-                    )
-                """)
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    # Garder seulement les 500 plus récents
+                    cursor = conn.execute("""
+                        DELETE FROM transfers 
+                        WHERE status = ? AND parent_transfer_id IS NOT NULL
+                        AND transfer_id NOT IN (
+                            SELECT transfer_id FROM transfers 
+                            WHERE status = ? AND parent_transfer_id IS NOT NULL
+                            ORDER BY updated_at DESC 
+                            LIMIT 500
+                        )
+                    """, (TransferStatus.COMPLETED.value, TransferStatus.COMPLETED.value))
 
-                deleted = cursor.rowcount
-                conn.commit()
+                    deleted = cursor.rowcount
+                    conn.commit()
 
-                if deleted > 0:
-                    self.fast_counts[TransferStatus.COMPLETED] = 500
-                    self.stats_updated.emit(self.fast_counts.copy())
-                    print(f"🧹 Auto-nettoyage: {deleted} transferts terminés supprimés")
+                    if deleted > 0:
+                        self.fast_counts[TransferStatus.COMPLETED] = 500
+                        self.stats_updated.emit(self.fast_counts.copy())
+                        print(f"🧹 Auto-nettoyage: {deleted} transferts terminés supprimés")
+            except Exception as e:
+                print(f"❌ Erreur auto-cleanup: {e}")
 
     def get_fast_stats(self) -> Dict[TransferStatus, int]:
         """Retourne les statistiques rapidement (sans requête DB)"""
@@ -620,9 +684,12 @@ class TransferManager(QObject):
                         self.transfer_removed.emit(child_id)
 
                 # Supprimer aussi de la DB
-                with sqlite3.connect(self.db_path) as conn:
-                    conn.execute("DELETE FROM transfers WHERE parent_transfer_id = ?", (transfer_id,))
-                    conn.commit()
+                try:
+                    with sqlite3.connect(self.db_path) as conn:
+                        conn.execute("DELETE FROM transfers WHERE parent_transfer_id = ?", (transfer_id,))
+                        conn.commit()
+                except Exception as e:
+                    print(f"❌ Erreur suppression enfants DB: {e}")
 
             # Supprimer le transfert principal
             old_status = transfer.status
@@ -630,9 +697,12 @@ class TransferManager(QObject):
             del self.transfers[transfer_id]
 
             # Supprimer de la DB
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute("DELETE FROM transfers WHERE transfer_id = ?", (transfer_id,))
-                conn.commit()
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.execute("DELETE FROM transfers WHERE transfer_id = ?", (transfer_id,))
+                    conn.commit()
+            except Exception as e:
+                print(f"❌ Erreur suppression transfert DB: {e}")
 
             self.transfer_removed.emit(transfer_id)
             self.stats_updated.emit(self.fast_counts.copy())
@@ -644,25 +714,28 @@ class TransferManager(QObject):
             return self.transfers[transfer_id]
 
         # Sinon chercher en DB et charger en cache
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                SELECT transfer_type, source_path, destination_path, file_name, 
-                       file_size, parent_transfer_id, status, progress
-                FROM transfers WHERE transfer_id = ?
-            """, (transfer_id,))
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT transfer_type, source_path, destination_path, file_name, 
+                           file_size, parent_transfer_id, status, progress
+                    FROM transfers WHERE transfer_id = ?
+                """, (transfer_id,))
 
-            row = cursor.fetchone()
-            if row:
-                transfer = TransferItem(
-                    transfer_id, TransferType(row[0]), row[1], row[2], row[3],
-                    row[4], row[5]
-                )
-                transfer.status = TransferStatus(row[6])
-                transfer.progress = row[7]
+                row = cursor.fetchone()
+                if row:
+                    transfer = TransferItem(
+                        transfer_id, TransferType(row[0]), row[1], row[2], row[3],
+                        row[4], row[5]
+                    )
+                    transfer.status = TransferStatus(row[6])
+                    transfer.progress = row[7]
 
-                # Mettre en cache pour prochaine fois
-                self.transfers[transfer_id] = transfer
-                return transfer
+                    # Mettre en cache pour prochaine fois
+                    self.transfers[transfer_id] = transfer
+                    return transfer
+        except Exception as e:
+            print(f"❌ Erreur get_transfer: {e}")
 
         return None
 
