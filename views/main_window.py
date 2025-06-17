@@ -31,6 +31,17 @@ from utils.helpers import (format_file_size, get_file_emoji, get_file_type_descr
                            format_date, sanitize_filename)
 
 
+def ensure_imports():
+    """S'assurer que les imports nécessaires sont présents"""
+    # Cette fonction doit être appelée au début du fichier main_window.py
+    # pour s'assurer que SafeFolderUploadThread est importé
+
+    # Ajouter cet import en haut du fichier main_window.py :
+    # from threads.transfer_threads import UploadThread, FolderUploadThread, DownloadThread, SafeFolderUploadThread
+    pass
+
+
+
 class DriveExplorerMainWindow(QMainWindow):
     """Fenêtre principale de l'application avec interface à onglets"""
 
@@ -799,7 +810,7 @@ class DriveExplorerMainWindow(QMainWindow):
     # ==================== ACTIONS SUR LES FICHIERS ====================
 
     def upload_selected_files(self):
-        """Upload les fichiers et dossiers sélectionnés vers Google Drive (version sécurisée)"""
+        """Upload les fichiers et dossiers sélectionnés vers Google Drive (version corrigée)"""
         try:
             if not self.connected:
                 ErrorDialog.show_error("❌ Non connecté",
@@ -822,23 +833,20 @@ class DriveExplorerMainWindow(QMainWindow):
             destination_id = self.drive_model.current_path_id
             is_shared_drive = self.drive_client.is_shared_drive(self.drive_model.current_drive_id)
 
-            # Afficher une boîte de dialogue de choix de mode pour les gros dossiers
+            # Compter les dossiers
             folder_count = sum(1 for row, name in items_to_upload
                                if os.path.isdir(os.path.join(self.local_model.current_path, name)))
 
             if folder_count > 0:
-                # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 10
-                if upload_mode is None:
-                    return  # Annulé
+                upload_mode = 10  # Mode sécurisé par défaut
             else:
-                upload_mode = 1  # Séquentiel pour les fichiers simples
+                upload_mode = 1
 
             for row, name in items_to_upload:
                 item_path = os.path.join(self.local_model.current_path, name)
 
                 if os.path.isfile(item_path):
-                    # Upload de fichier simple (toujours sécurisé)
+                    # Upload de fichier simple
                     upload_thread = UploadThread(
                         self.drive_client, item_path, destination_id,
                         is_shared_drive, self.transfer_manager
@@ -852,11 +860,11 @@ class DriveExplorerMainWindow(QMainWindow):
                     upload_thread.start()
 
                 elif os.path.isdir(item_path):
-                    # Upload de dossier sécurisé
+                    # MODIFIÉ : Upload de dossier avec nouveau système
                     folder_upload_thread = SafeFolderUploadThread(
                         self.drive_client, item_path, destination_id,
                         is_shared_drive, self.transfer_manager,
-                        max_parallel_uploads=upload_mode  # Mode choisi par l'utilisateur
+                        max_parallel_uploads=upload_mode
                     )
                     folder_upload_thread.progress_signal.connect(self.update_progress)
                     folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
@@ -1656,7 +1664,7 @@ class DriveExplorerMainWindow(QMainWindow):
             ErrorDialog.show_error("❌ Erreur", f"Erreur lors du glisser-déposer: {str(e)}", parent=self)
 
     def upload_files_list(self, file_paths):
-        """Upload une liste de fichiers/dossiers vers Google Drive (version sécurisée)"""
+        """Upload une liste de fichiers/dossiers vers Google Drive (version corrigée)"""
         try:
             if not self.connected:
                 return
@@ -1668,12 +1676,9 @@ class DriveExplorerMainWindow(QMainWindow):
             folder_count = sum(1 for path in file_paths if os.path.isdir(path))
 
             if folder_count > 0:
-                # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 10
-                if upload_mode is None:
-                    return  # Annulé
+                upload_mode = 10  # Mode sécurisé par défaut
             else:
-                upload_mode = 1  # Séquentiel pour les fichiers simples
+                upload_mode = 1
 
             for file_path in file_paths:
                 if os.path.isfile(file_path):
@@ -1690,6 +1695,7 @@ class DriveExplorerMainWindow(QMainWindow):
                     upload_thread.start()
 
                 elif os.path.isdir(file_path):
+                    # MODIFIÉ : Upload de dossier avec nouveau système
                     folder_upload_thread = SafeFolderUploadThread(
                         self.drive_client, file_path, destination_id,
                         is_shared_drive, self.transfer_manager,
@@ -1720,6 +1726,8 @@ class DriveExplorerMainWindow(QMainWindow):
 
         mode_text = "sécurisé" if self.SAFE_MODE else "rapide"
         self.status_bar.showMessage(f"🔄 Mode d'upload par défaut: {mode_text}", 3000)
+
+
     # ========= MÉTHODES POUR GÉRER LES TRANSFERTS =========
 
     def cancel_transfer(self, transfer_id: str) -> None:

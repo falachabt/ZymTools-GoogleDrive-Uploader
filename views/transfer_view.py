@@ -11,7 +11,6 @@ from PyQt5.QtGui import QFont, QStandardItem
 
 from models.transfer_models import TransferManager, TransferListModel, TransferStatus, TransferType
 
-
 class TransferTreeView(QTreeView):
     """Vue personnalisée pour la liste des transferts"""
 
@@ -24,14 +23,9 @@ class TransferTreeView(QTreeView):
         self.setSortingEnabled(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
 
-
-
         # Ajuster les colonnes
         header = self.header()
         header.setStretchLastSection(True)
-
-
-
 
 
 class TransferStatsWidget(QWidget):
@@ -48,13 +42,11 @@ class TransferStatsWidget(QWidget):
         self.transfer_manager = transfer_manager
         self.setup_ui()
 
-        # MODIFICATION : Ne pas démarrer le timer immédiatement
-        # Créer le timer mais ne pas le démarrer tout de suite
+        # Timer pour les mises à jour
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_stats)
-
-        # Démarrer le timer avec un délai pour laisser le temps à tout de s'initialiser
-        QTimer.singleShot(2000, self.start_updates)  # Démarrer après 2 secondes
+        # Démarrer après un délai pour laisser le temps à tout de s'initialiser
+        QTimer.singleShot(2000, self.start_updates)
 
     def start_updates(self) -> None:
         """Démarre les mises à jour automatiques"""
@@ -99,37 +91,63 @@ class TransferStatsWidget(QWidget):
     def update_stats(self) -> None:
         """Met à jour les statistiques affichées"""
         try:
-            # PROTECTION : Vérifier que le transfer_manager existe
             if not hasattr(self, 'transfer_manager') or self.transfer_manager is None:
                 return
 
+            # NOUVEAU : Statistiques basées sur les fichiers individuels pour les queues
             all_transfers = self.transfer_manager.get_all_transfers()
-            active_transfers = self.transfer_manager.get_active_transfers()
-            completed_transfers = self.transfer_manager.get_completed_transfers()
+            individual_files = self.transfer_manager.get_individual_file_transfers()
+            main_transfers = self.transfer_manager.get_main_transfers()
 
-            # Compter les erreurs
-            error_count = sum(1 for t in all_transfers.values() if t.status == TransferStatus.ERROR)
+            # Pour les stats, on compte les fichiers individuels + les transferts simples (non-dossiers)
+            active_individual = {tid: t for tid, t in individual_files.items()
+                                 if t.status in [TransferStatus.PENDING, TransferStatus.IN_PROGRESS,
+                                                 TransferStatus.PAUSED]}
+
+            completed_individual = {tid: t for tid, t in individual_files.items()
+                                    if t.status == TransferStatus.COMPLETED}
+
+            error_individual = {tid: t for tid, t in individual_files.items()
+                                if t.status == TransferStatus.ERROR}
+
+            # Ajouter les transferts simples (non-dossiers)
+            simple_transfers = {tid: t for tid, t in main_transfers.items()
+                                if not t.is_folder_transfer()}
+
+            active_simple = {tid: t for tid, t in simple_transfers.items()
+                             if t.status in [TransferStatus.PENDING, TransferStatus.IN_PROGRESS, TransferStatus.PAUSED]}
+
+            completed_simple = {tid: t for tid, t in simple_transfers.items()
+                                if t.status == TransferStatus.COMPLETED}
+
+            error_simple = {tid: t for tid, t in simple_transfers.items()
+                            if t.status == TransferStatus.ERROR}
+
+            total_count = len(individual_files) + len(simple_transfers)
+            active_count = len(active_individual) + len(active_simple)
+            completed_count = len(completed_individual) + len(completed_simple)
+            error_count = len(error_individual) + len(error_simple)
 
             # Mettre à jour les labels
-            self.total_label.setText(f"📊 Total: {len(all_transfers)}")
-            self.active_label.setText(f"🔄 Actifs: {len(active_transfers)}")
-            self.completed_label.setText(f"✅ Terminés: {len(completed_transfers) - error_count}")
+            self.total_label.setText(f"📊 Total: {total_count}")
+            self.active_label.setText(f"🔄 Actifs: {active_count}")
+            self.completed_label.setText(f"✅ Terminés: {completed_count}")
             self.errors_label.setText(f"❌ Erreurs: {error_count}")
 
-            # Calculer le progrès global et la vitesse
-            if active_transfers:
-                total_progress = sum(t.progress for t in active_transfers.values())
-                global_progress = total_progress / len(active_transfers)
-
-                total_speed = sum(t.speed for t in active_transfers.values())
+            # Calculer le progrès global et la vitesse (seulement sur les actifs)
+            if active_count > 0:
+                all_active = {**active_individual, **active_simple}
+                total_progress = sum(t.progress for t in all_active.values())
+                global_progress = total_progress / len(all_active)
+                total_speed = sum(t.speed for t in all_active.values())
 
                 self.global_progress.setValue(int(global_progress))
                 self.speed_label.setText(f"⚡ Vitesse: {self.format_speed(total_speed)}")
             else:
                 self.global_progress.setValue(0)
                 self.speed_label.setText("⚡ Vitesse: 0 B/s")
+
         except Exception as e:
-            # En cas d'erreur, ne pas crasher
             print(f"Erreur dans update_stats: {e}")
 
     def format_speed(self, speed: float) -> str:
@@ -143,8 +161,9 @@ class TransferStatsWidget(QWidget):
         else:
             return f"{speed / (1024 * 1024 * 1024):.1f} GB/s"
 
+
 class TransferPanel(QWidget):
-    """Panneau principal de gestion des transferts"""
+    """Panneau principal de gestion des transferts - VERSION CORRIGÉE"""
 
     # Signaux pour la communication avec la fenêtre principale
     cancel_transfer_requested = pyqtSignal(str)  # transfer_id
@@ -160,11 +179,7 @@ class TransferPanel(QWidget):
         """
         super().__init__()
         self.transfer_manager = transfer_manager
-
-
         self.setup_ui()
-
-
         self.connect_signals()
 
     def setup_ui(self) -> None:
@@ -200,12 +215,12 @@ class TransferPanel(QWidget):
         # Créer le widget d'onglets
         self.tab_widget = QTabWidget()
 
-        # Onglet 1: Vue complète des transferts
+        # Onglet 1: Vue complète des transferts (MODIFIÉ : ne montre que les transferts principaux)
         self.list_tab = QWidget()
         list_layout = QVBoxLayout(self.list_tab)
 
-        # Vue des transferts
-        self.transfer_model = TransferListModel(self.transfer_manager)
+        # Vue des transferts principaux seulement
+        self.transfer_model = TransferListModel(self.transfer_manager, show_individual_files=False)
         self.transfer_view = TransferTreeView()
         self.transfer_view.setModel(self.transfer_model)
         list_layout.addWidget(self.transfer_view)
@@ -213,7 +228,7 @@ class TransferPanel(QWidget):
         # Ajouter l'onglet de liste
         self.tab_widget.addTab(self.list_tab, "📋 Liste complète")
 
-        # Onglet 2: Vue de la queue de transferts
+        # Onglet 2: Vue de la queue de transferts (MODIFIÉ : montre les fichiers individuels)
         self.queue_panel = TransferQueuePanel(self.transfer_manager)
         self.tab_widget.addTab(self.queue_panel, "🔄 Queue de transferts")
 
@@ -287,11 +302,6 @@ class TransferPanel(QWidget):
             if transfer_id:
                 transfer = self.transfer_manager.get_transfer(transfer_id)
                 if transfer:
-                    #if transfer.status == TransferStatus.IN_PROGRESS:
-                    #    menu.addAction("⏸️ Suspendre", lambda: self.pause_transfer(transfer_id))
-                    #elif transfer.status == TransferStatus.PAUSED:
-                    #    menu.addAction("▶️ Reprendre", lambda: self.resume_transfer(transfer_id))
-
                     if transfer.status in [TransferStatus.PENDING, TransferStatus.IN_PROGRESS, TransferStatus.PAUSED]:
                         menu.addAction("🚫 Annuler", lambda: self.cancel_transfer(transfer_id))
 
@@ -310,22 +320,6 @@ class TransferPanel(QWidget):
         self.main_content.setVisible(not self.is_collapsed)
         self.toggle_button.setText("🔼" if self.is_collapsed else "🔽")
 
-    def pause_selected_transfer(self) -> None:
-        """Suspend le transfert sélectionné"""
-        selected_row = self.transfer_view.currentIndex().row()
-        if selected_row >= 0:
-            transfer_id = self.transfer_model.get_transfer_id_from_row(selected_row)
-            if transfer_id:
-                self.pause_transfer(transfer_id)
-
-    def resume_selected_transfer(self) -> None:
-        """Reprend le transfert sélectionné"""
-        selected_row = self.transfer_view.currentIndex().row()
-        if selected_row >= 0:
-            transfer_id = self.transfer_model.get_transfer_id_from_row(selected_row)
-            if transfer_id:
-                self.resume_transfer(transfer_id)
-
     def cancel_selected_transfer(self) -> None:
         """Annule le transfert sélectionné"""
         selected_row = self.transfer_view.currentIndex().row()
@@ -333,16 +327,6 @@ class TransferPanel(QWidget):
             transfer_id = self.transfer_model.get_transfer_id_from_row(selected_row)
             if transfer_id:
                 self.cancel_transfer(transfer_id)
-
-    def pause_transfer(self, transfer_id: str) -> None:
-        """Suspend un transfert"""
-        self.pause_transfer_requested.emit(transfer_id)
-        self.transfer_manager.pause_transfer(transfer_id)
-
-    def resume_transfer(self, transfer_id: str) -> None:
-        """Reprend un transfert"""
-        self.resume_transfer_requested.emit(transfer_id)
-        self.transfer_manager.resume_transfer(transfer_id)
 
     def cancel_transfer(self, transfer_id: str) -> None:
         """Annule un transfert"""
@@ -355,7 +339,6 @@ class TransferPanel(QWidget):
 
     def retry_transfer(self, transfer_id: str) -> None:
         """Réessaie un transfert (pour une implémentation future)"""
-        # Pour l'instant, on remet juste en attente
         self.transfer_manager.update_transfer_status(transfer_id, TransferStatus.PENDING)
 
     def clear_completed_transfers(self) -> None:
@@ -364,7 +347,6 @@ class TransferPanel(QWidget):
 
     def clear_all_transfers(self) -> None:
         """Supprime tous les transferts"""
-        # Demander confirmation via un signal si nécessaire
         from views.dialogs import ConfirmationDialog
         if ConfirmationDialog.ask_confirmation(
                 "🗑️ Vider la liste",
@@ -377,8 +359,6 @@ class TransferPanel(QWidget):
 
     def toggle_filter_active(self, checked: bool) -> None:
         """Bascule le filtre pour afficher seulement les transferts actifs"""
-        # Cette fonctionnalité peut être implémentée avec un proxy model
-        # Pour l'instant, on laisse tel quel
         pass
 
     def update_toolbar_state(self) -> None:
@@ -391,17 +371,11 @@ class TransferPanel(QWidget):
             if transfer_id:
                 transfer = self.transfer_manager.get_transfer(transfer_id)
                 if transfer:
-                    # Activer/désactiver selon le statut
-                    #self.pause_action.setEnabled(transfer.status == TransferStatus.IN_PROGRESS)
-                    #self.resume_action.setEnabled(transfer.status == TransferStatus.PAUSED)
                     self.cancel_action.setEnabled(transfer.status in [
                         TransferStatus.PENDING, TransferStatus.IN_PROGRESS, TransferStatus.PAUSED
                     ])
                     return
 
-        # Pas de sélection ou transfert invalide
-        #self.pause_action.setEnabled(False)
-        #self.resume_action.setEnabled(False)
         self.cancel_action.setEnabled(False)
 
     def get_transfer_count(self) -> int:
@@ -430,7 +404,7 @@ class TransferPanel(QWidget):
 
 
 class TransferQueuePanel(QWidget):
-    """Panneau affichant la queue des transferts avec des onglets séparés pour les différents états"""
+    """Panneau affichant la queue des transferts - VERSION CORRIGÉE avec mises à jour"""
 
     def __init__(self, transfer_manager: TransferManager):
         """
@@ -444,20 +418,25 @@ class TransferQueuePanel(QWidget):
         self.setup_ui()
         self.connect_signals()
 
+        # NOUVEAU : Timer pour rafraîchir les proxy models
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self.refresh_all_proxies)
+        self.refresh_timer.start(2000)  # Rafraîchir toutes les 2 secondes
+
     def setup_ui(self) -> None:
         """Configure l'interface utilisateur"""
         layout = QVBoxLayout(self)
 
         # Titre du panneau
-        title_label = QLabel("📋 Queue de transferts")
+        title_label = QLabel("📋 Queue de transferts (Fichiers individuels)")
         title_font = QFont()
         title_font.setBold(True)
         title_font.setPointSize(12)
         title_label.setFont(title_font)
         layout.addWidget(title_label)
 
-        # Créer les modèles filtrés pour chaque état
-        self.main_model = TransferListModel(self.transfer_manager)
+        # MODIFIÉ : Créer un modèle pour les fichiers individuels seulement
+        self.main_model = TransferListModel(self.transfer_manager, show_individual_files=True)
 
         # Créer le widget d'onglets pour les différents statuts
         self.status_tabs = QTabWidget()
@@ -470,7 +449,7 @@ class TransferQueuePanel(QWidget):
         in_progress_tab = QWidget()
         in_progress_layout = QVBoxLayout(in_progress_tab)
 
-        self.in_progress_proxy = QSortFilterProxyModel()
+        self.in_progress_proxy = CustomTransferProxyModel()
         self.in_progress_proxy.setSourceModel(self.main_model)
         self.in_progress_proxy.setFilterKeyColumn(2)  # Colonne de statut
         self.in_progress_proxy.setFilterFixedString(TransferStatus.IN_PROGRESS.value)
@@ -483,7 +462,7 @@ class TransferQueuePanel(QWidget):
         pending_tab = QWidget()
         pending_layout = QVBoxLayout(pending_tab)
 
-        self.pending_proxy = QSortFilterProxyModel()
+        self.pending_proxy = CustomTransferProxyModel()
         self.pending_proxy.setSourceModel(self.main_model)
         self.pending_proxy.setFilterKeyColumn(2)  # Colonne de statut
         self.pending_proxy.setFilterFixedString(TransferStatus.PENDING.value)
@@ -496,7 +475,7 @@ class TransferQueuePanel(QWidget):
         error_tab = QWidget()
         error_layout = QVBoxLayout(error_tab)
 
-        self.error_proxy = QSortFilterProxyModel()
+        self.error_proxy = CustomTransferProxyModel()
         self.error_proxy.setSourceModel(self.main_model)
         self.error_proxy.setFilterKeyColumn(2)  # Colonne de statut
         self.error_proxy.setFilterFixedString(TransferStatus.ERROR.value)
@@ -509,7 +488,7 @@ class TransferQueuePanel(QWidget):
         completed_tab = QWidget()
         completed_layout = QVBoxLayout(completed_tab)
 
-        self.completed_proxy = QSortFilterProxyModel()
+        self.completed_proxy = CustomTransferProxyModel()
         self.completed_proxy.setSourceModel(self.main_model)
         self.completed_proxy.setFilterKeyColumn(2)  # Colonne de statut
         self.completed_proxy.setFilterFixedString(TransferStatus.COMPLETED.value)
@@ -522,7 +501,7 @@ class TransferQueuePanel(QWidget):
         cancelled_tab = QWidget()
         cancelled_layout = QVBoxLayout(cancelled_tab)
 
-        self.cancelled_proxy = QSortFilterProxyModel()
+        self.cancelled_proxy = CustomTransferProxyModel()
         self.cancelled_proxy.setSourceModel(self.main_model)
         self.cancelled_proxy.setFilterKeyColumn(2)  # Colonne de statut
         self.cancelled_proxy.setFilterFixedString(TransferStatus.CANCELLED.value)
@@ -535,7 +514,7 @@ class TransferQueuePanel(QWidget):
         paused_tab = QWidget()
         paused_layout = QVBoxLayout(paused_tab)
 
-        self.paused_proxy = QSortFilterProxyModel()
+        self.paused_proxy = CustomTransferProxyModel()
         self.paused_proxy.setSourceModel(self.main_model)
         self.paused_proxy.setFilterKeyColumn(2)  # Colonne de statut
         self.paused_proxy.setFilterFixedString(TransferStatus.PAUSED.value)
@@ -544,23 +523,68 @@ class TransferQueuePanel(QWidget):
         self.paused_view.setModel(self.paused_proxy)
         paused_layout.addWidget(self.paused_view)
 
-        # Ajouter les onglets au widget d'onglets
-        self.status_tabs.addTab(in_progress_tab, "🔄 En cours")
-        self.status_tabs.addTab(pending_tab, "⏳ En attente")
-        self.status_tabs.addTab(error_tab, "❌ Erreurs")
-        self.status_tabs.addTab(completed_tab, "✅ Terminés")
-        self.status_tabs.addTab(cancelled_tab, "🚫 Annulés")
-        self.status_tabs.addTab(paused_tab, "⏸️ Suspendus")
+        # Ajouter les onglets au widget d'onglets avec compteurs
+        self.update_tab_titles()
+        self.status_tabs.addTab(in_progress_tab, "🔄 En cours (0)")
+        self.status_tabs.addTab(pending_tab, "⏳ En attente (0)")
+        self.status_tabs.addTab(error_tab, "❌ Erreurs (0)")
+        self.status_tabs.addTab(completed_tab, "✅ Terminés (0)")
+        self.status_tabs.addTab(cancelled_tab, "🚫 Annulés (0)")
+        self.status_tabs.addTab(paused_tab, "⏸️ Suspendus (0)")
 
     def connect_signals(self) -> None:
         """Connecte les signaux"""
-        # Les signaux sont déjà connectés dans le modèle principal
-        pass
+        # Connecter aux changements du gestionnaire de transferts
+        self.transfer_manager.transfer_added.connect(self.update_tab_titles)
+        self.transfer_manager.transfer_removed.connect(self.update_tab_titles)
+        self.transfer_manager.transfer_status_changed.connect(self.update_tab_titles)
+
+    def refresh_all_proxies(self) -> None:
+        """Force le rafraîchissement de tous les proxy models"""
+        try:
+            for proxy in [self.in_progress_proxy, self.pending_proxy, self.error_proxy,
+                          self.completed_proxy, self.cancelled_proxy, self.paused_proxy]:
+                proxy.invalidateFilter()
+
+            # Mettre à jour les titres des onglets
+            self.update_tab_titles()
+        except Exception as e:
+            print(f"Erreur lors du rafraîchissement des proxies: {e}")
+
+    def update_tab_titles(self) -> None:
+        """Met à jour les titres des onglets avec les compteurs"""
+        try:
+            # Compter les fichiers individuels par statut
+            individual_files = self.transfer_manager.get_individual_file_transfers()
+
+            counts = {
+                TransferStatus.IN_PROGRESS: 0,
+                TransferStatus.PENDING: 0,
+                TransferStatus.ERROR: 0,
+                TransferStatus.COMPLETED: 0,
+                TransferStatus.CANCELLED: 0,
+                TransferStatus.PAUSED: 0
+            }
+
+            for transfer in individual_files.values():
+                if transfer.status in counts:
+                    counts[transfer.status] += 1
+
+            # Mettre à jour les titres
+            self.status_tabs.setTabText(0, f"🔄 En cours ({counts[TransferStatus.IN_PROGRESS]})")
+            self.status_tabs.setTabText(1, f"⏳ En attente ({counts[TransferStatus.PENDING]})")
+            self.status_tabs.setTabText(2, f"❌ Erreurs ({counts[TransferStatus.ERROR]})")
+            self.status_tabs.setTabText(3, f"✅ Terminés ({counts[TransferStatus.COMPLETED]})")
+            self.status_tabs.setTabText(4, f"🚫 Annulés ({counts[TransferStatus.CANCELLED]})")
+            self.status_tabs.setTabText(5, f"⏸️ Suspendus ({counts[TransferStatus.PAUSED]})")
+
+        except Exception as e:
+            print(f"Erreur lors de la mise à jour des titres d'onglets: {e}")
 
     def update_column_widths(self) -> None:
         """Ajuste la largeur des colonnes pour toutes les vues"""
-        for view in [self.in_progress_view, self.pending_view, self.error_view, 
-                    self.completed_view, self.cancelled_view, self.paused_view]:
+        for view in [self.in_progress_view, self.pending_view, self.error_view,
+                     self.completed_view, self.cancelled_view, self.paused_view]:
             header = view.header()
             header.setSectionResizeMode(0, QHeaderView.Stretch)  # Nom du fichier
             header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
@@ -569,3 +593,17 @@ class TransferQueuePanel(QWidget):
             header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Vitesse
             header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # ETA
             header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Taille
+
+
+class CustomTransferProxyModel(QSortFilterProxyModel):
+    """Proxy model personnalisé pour les transferts avec meilleur rafraîchissement"""
+
+    def __init__(self):
+        super().__init__()
+        # Actualiser automatiquement quand le modèle source change
+        self.setDynamicSortFilter(True)
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        """Détermine si une ligne doit être affichée"""
+        # Laisser le filtre par défaut faire son travail
+        return super().filterAcceptsRow(source_row, source_parent)

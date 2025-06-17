@@ -194,7 +194,7 @@ class UploadThread(QThread):
 
 
 class SafeFolderUploadThread(QThread):
-    """Thread ultra-sécurisé pour uploader les dossiers avec gestion robuste des erreurs"""
+    """Thread ultra-sécurisé pour uploader les dossiers avec gestion des fichiers individuels"""
 
     progress_signal = pyqtSignal(int)
     completed_signal = pyqtSignal(str)
@@ -205,7 +205,7 @@ class SafeFolderUploadThread(QThread):
     def __init__(self, drive_client: GoogleDriveClient, folder_path: str,
                  parent_id: str = 'root', is_shared_drive: bool = False,
                  transfer_manager: Optional[TransferManager] = None,
-                 max_parallel_uploads: int = 3):  # Par défaut 1 pour la sécurité
+                 max_parallel_uploads: int = 3):
         """
         Initialise le thread d'upload de dossier sécurisé
 
@@ -215,7 +215,7 @@ class SafeFolderUploadThread(QThread):
             parent_id: ID du dossier parent de destination
             is_shared_drive: True si c'est un Shared Drive
             transfer_manager: Gestionnaire de transferts
-            max_parallel_uploads: Nombre maximum d'uploads simultanés (recommandé: 1-2)
+            max_parallel_uploads: Nombre maximum d'uploads simultanés
         """
         super().__init__()
         self.drive_client = drive_client
@@ -223,12 +223,16 @@ class SafeFolderUploadThread(QThread):
         self.parent_id = parent_id
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
-        # Limiter à un maximum sécurisé
         self.max_parallel_uploads = max(max_parallel_uploads, 10)
         self.total_files = 0
         self.uploaded_files = 0
         self.failed_files = 0
-        self.transfer_id: Optional[str] = None
+
+        # NOUVEAU : IDs des transferts
+        self.folder_transfer_id: Optional[str] = None
+        self.file_transfer_ids: List[str] = []
+        self.file_to_transfer_id: Dict[str, str] = {}  # Mapping fichier -> transfer_id
+
         self.is_cancelled = False
         self.start_time = 0
         self.total_size = 0
@@ -271,6 +275,7 @@ class SafeFolderUploadThread(QThread):
                                 'file_path': file_path,
                                 'file_name': file,
                                 'relative_dir': rel_path if rel_path != '.' else '',
+                                'relative_path': os.path.relpath(file_path, folder_path),
                                 'size': os.path.getsize(file_path)
                             })
         except Exception as e:
@@ -310,12 +315,11 @@ class SafeFolderUploadThread(QThread):
                             break
                         except Exception as e:
                             if attempt < 2:
-                                time.sleep(1 + attempt)  # Délai progressif
+                                time.sleep(1 + attempt)
                                 continue
                             else:
                                 raise e
 
-                    # Petit délai entre créations de dossiers
                     time.sleep(0.2)
 
         except Exception as e:
@@ -324,28 +328,38 @@ class SafeFolderUploadThread(QThread):
         return folder_mapping
 
     def upload_files_batch_safe(self, file_batch: List[Dict[str, Any]],
-                               folder_mapping: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Upload un batch de fichiers de manière ultra-sécurisée"""
+                                folder_mapping: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Upload un batch de fichiers avec mise à jour des transferts individuels"""
         results = []
 
         def upload_single_file_safe(file_info):
-            """Upload sécurisé d'un seul fichier"""
+            """Upload sécurisé d'un seul fichier avec mise à jour du transfert individuel"""
             try:
                 with QMutexLocker(self.cancelled_mutex):
                     if self.is_cancelled:
                         return {'success': False, 'cancelled': True, 'file_info': file_info}
 
+                file_path = file_info['file_path']
+                relative_path = file_info['relative_path']
+
+                # Trouver le transfer_id correspondant
+                transfer_id = self.file_to_transfer_id.get(relative_path)
+
+                if transfer_id and self.transfer_manager:
+                    # Mettre à jour le statut : en cours
+                    self.transfer_manager.update_transfer_status(transfer_id, TransferStatus.IN_PROGRESS)
+
                 # Déterminer le dossier parent
                 parent_id = folder_mapping.get(file_info['relative_dir'], self.parent_id)
 
-                # Status update
-                file_name = file_info['file_name']
-
                 # Upload sécurisé avec retry
                 file_id = SafeGoogleDriveUploader.safe_upload_file(
-                    file_info['file_path'], parent_id,
-                    self.is_shared_drive
+                    file_path, parent_id, self.is_shared_drive
                 )
+
+                # Mettre à jour le transfert individuel : terminé
+                if transfer_id and self.transfer_manager:
+                    self.transfer_manager.update_transfer_status(transfer_id, TransferStatus.COMPLETED)
 
                 return {
                     'success': True,
@@ -354,6 +368,10 @@ class SafeFolderUploadThread(QThread):
                 }
 
             except Exception as e:
+                # Mettre à jour le transfert individuel : erreur
+                if transfer_id and self.transfer_manager:
+                    self.transfer_manager.update_transfer_status(transfer_id, TransferStatus.ERROR, str(e))
+
                 return {
                     'success': False,
                     'error': str(e),
@@ -370,7 +388,7 @@ class SafeFolderUploadThread(QThread):
                 result = upload_single_file_safe(file_info)
                 results.append(result)
 
-                # Mettre à jour le progrès
+                # Mettre à jour le progrès global
                 with QMutexLocker(self.progress_mutex):
                     if result['success']:
                         self.uploaded_files += 1
@@ -379,17 +397,6 @@ class SafeFolderUploadThread(QThread):
 
                     progress = int(((self.uploaded_files + self.failed_files) / self.total_files) * 100)
                     self.progress_signal.emit(progress)
-
-                    # Mettre à jour le transfert
-                    if self.transfer_manager and self.transfer_id:
-                        elapsed_time = time.time() - self.start_time
-                        if elapsed_time > 0:
-                            avg_file_size = self.total_size / self.total_files if self.total_files > 0 else 0
-                            speed = ((self.uploaded_files + self.failed_files) * avg_file_size) / elapsed_time
-                            self.transfer_manager.update_transfer_progress(
-                                self.transfer_id, progress,
-                                int((self.uploaded_files + self.failed_files) * avg_file_size), speed
-                            )
 
                 # Status
                 if result['success']:
@@ -400,7 +407,7 @@ class SafeFolderUploadThread(QThread):
 
                 # Délai entre uploads pour éviter le rate limiting
                 if not self.is_cancelled:
-                    time.sleep(0.001)  # 100ms entre chaque fichier
+                    time.sleep(0.001)
         else:
             # Upload parallèle très limité et sécurisé
             with ThreadPoolExecutor(max_workers=self.max_parallel_uploads) as executor:
@@ -425,7 +432,7 @@ class SafeFolderUploadThread(QThread):
                     result = future.result()
                     results.append(result)
 
-                    # Mettre à jour le progrès (même code que séquentiel)
+                    # Mettre à jour le progrès
                     with QMutexLocker(self.progress_mutex):
                         if result['success']:
                             self.uploaded_files += 1
@@ -434,16 +441,6 @@ class SafeFolderUploadThread(QThread):
 
                         progress = int(((self.uploaded_files + self.failed_files) / self.total_files) * 100)
                         self.progress_signal.emit(progress)
-
-                        if self.transfer_manager and self.transfer_id:
-                            elapsed_time = time.time() - self.start_time
-                            if elapsed_time > 0:
-                                avg_file_size = self.total_size / self.total_files if self.total_files > 0 else 0
-                                speed = ((self.uploaded_files + self.failed_files) * avg_file_size) / elapsed_time
-                                self.transfer_manager.update_transfer_progress(
-                                    self.transfer_id, progress,
-                                    int((self.uploaded_files + self.failed_files) * avg_file_size), speed
-                                )
 
                     # Status
                     if result['success']:
@@ -455,7 +452,7 @@ class SafeFolderUploadThread(QThread):
         return results
 
     def run(self) -> None:
-        """Exécute l'upload du dossier de manière ultra-sécurisée"""
+        """Exécute l'upload du dossier avec gestion des transferts individuels"""
         self.start_time = time.time()
         folder_name = os.path.basename(self.folder_path)
 
@@ -469,15 +466,18 @@ class SafeFolderUploadThread(QThread):
                 self.completed_signal.emit(folder_id)
                 return
 
-            # Créer l'entrée de transfert
+            # NOUVEAU : Créer les transferts dans le gestionnaire
             if self.transfer_manager:
-                self.transfer_id = self.transfer_manager.add_transfer(
-                    TransferType.UPLOAD_FOLDER,
+                self.folder_transfer_id, self.file_transfer_ids = self.transfer_manager.add_folder_transfer_with_files(
                     self.folder_path,
                     f"Google Drive/{self.parent_id}",
-                    folder_name,
-                    self.total_size
+                    folder_name
                 )
+
+                # Créer le mapping fichier -> transfer_id
+                all_files = self.collect_all_files(self.folder_path)
+                for file_info, transfer_id in zip(all_files, self.file_transfer_ids):
+                    self.file_to_transfer_id[file_info['relative_path']] = transfer_id
 
             self.status_signal.emit(f"🚀 Analyse: {self.total_files} fichiers...")
 
@@ -495,10 +495,11 @@ class SafeFolderUploadThread(QThread):
             all_files = self.collect_all_files(self.folder_path)
 
             # Upload avec batch plus petits pour la sécurité
-            batch_size = max(1, min(100, len(all_files)))  # Batch très petit
+            batch_size = max(1, min(100, len(all_files)))
             file_batches = [all_files[i:i + batch_size] for i in range(0, len(all_files), batch_size)]
 
-            self.status_signal.emit(f"⚡ Upload: {self.total_files} fichiers (mode: {'séquentiel' if self.max_parallel_uploads == 1 else 'parallèle limité'})...")
+            self.status_signal.emit(
+                f"⚡ Upload: {self.total_files} fichiers (mode: {'séquentiel' if self.max_parallel_uploads == 1 else 'parallèle limité'})...")
 
             # Traiter chaque batch avec délais
             all_errors = []
@@ -506,7 +507,7 @@ class SafeFolderUploadThread(QThread):
                 if self.is_cancelled:
                     break
 
-                self.status_signal.emit(f"📦 Batch {i+1}/{len(file_batches)} ({len(batch)} fichiers)...")
+                self.status_signal.emit(f"📦 Batch {i + 1}/{len(file_batches)} ({len(batch)} fichiers)...")
                 results = self.upload_files_batch_safe(batch, folder_mapping)
 
                 # Collecter les erreurs
@@ -517,7 +518,7 @@ class SafeFolderUploadThread(QThread):
 
                 # Délai entre batches pour éviter la surcharge
                 if i < len(file_batches) - 1 and not self.is_cancelled:
-                    time.sleep(0.0003)  # 1 seconde entre batches
+                    time.sleep(0.0003)
 
             if not self.is_cancelled:
                 # Rapport final
@@ -532,9 +533,6 @@ class SafeFolderUploadThread(QThread):
 
                 # Considérer comme terminé même avec quelques erreurs
                 self.completed_signal.emit(main_folder_id)
-                if self.transfer_manager and self.transfer_id:
-                    final_status = TransferStatus.COMPLETED if len(all_errors) == 0 else TransferStatus.ERROR
-                    self.transfer_manager.update_transfer_status(self.transfer_id, final_status)
 
                 self.time_signal.emit(total_time)
                 self.status_signal.emit(f"🎉 Terminé: {success_count}/{self.total_files} fichiers en {total_time:.1f}s")
@@ -542,9 +540,10 @@ class SafeFolderUploadThread(QThread):
         except Exception as e:
             if not self.is_cancelled:
                 self.error_signal.emit(f"Erreur fatale: {str(e)}")
-                if self.transfer_manager and self.transfer_id:
+                # Marquer tous les transferts en erreur
+                if self.transfer_manager and self.folder_transfer_id:
                     self.transfer_manager.update_transfer_status(
-                        self.transfer_id, TransferStatus.ERROR, str(e)
+                        self.folder_transfer_id, TransferStatus.ERROR, str(e)
                     )
 
     def cancel(self) -> None:
@@ -552,11 +551,9 @@ class SafeFolderUploadThread(QThread):
         with QMutexLocker(self.cancelled_mutex):
             self.is_cancelled = True
 
-        if self.transfer_manager and self.transfer_id:
-            self.transfer_manager.update_transfer_status(
-                self.transfer_id, TransferStatus.CANCELLED
-            )
-
+        # Annuler tous les transferts associés
+        if self.transfer_manager and self.folder_transfer_id:
+            self.transfer_manager.cancel_transfer(self.folder_transfer_id)
 
 # Alias pour maintenir la compatibilité
 FolderUploadThread = SafeFolderUploadThread
