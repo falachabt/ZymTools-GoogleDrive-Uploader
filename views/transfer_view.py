@@ -1,15 +1,17 @@
 """
-Vue pour afficher et gérer la liste des transferts
+Vue pour afficher et gérer la liste des transferts - VERSION OPTIMISÉE HAUTE PERFORMANCE
 """
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView,
                              QPushButton, QToolBar, QAction, QLabel,
                              QProgressBar, QSplitter, QGroupBox, QMenu,
-                             QHeaderView, QAbstractItemView, QTabWidget)
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize, QSortFilterProxyModel
+                             QHeaderView, QAbstractItemView, QTabWidget,
+                             QTableView)
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize, QSortFilterProxyModel, QModelIndex, QAbstractTableModel
 from PyQt5.QtGui import QFont, QStandardItem
 
 from models.transfer_models import TransferManager, TransferListModel, TransferStatus, TransferType
+
 
 class TransferTreeView(QTreeView):
     """Vue personnalisée pour la liste des transferts"""
@@ -28,30 +30,232 @@ class TransferTreeView(QTreeView):
         header.setStretchLastSection(True)
 
 
+class OptimizedTransferModel(QAbstractTableModel):
+    """Modèle OPTIMISÉ pour afficher des milliers de transferts - VERSION HAUTE PERFORMANCE"""
+
+    def __init__(self, transfer_manager: TransferManager, status_filter: TransferStatus = None):
+        super().__init__()
+        self.transfer_manager = transfer_manager
+        self.status_filter = status_filter
+
+        # Cache virtuel pour l'affichage (seulement ce qui est visible)
+        self.display_data = []  # Liste des transfer_ids visibles
+        self.data_cache = {}    # Cache des données pour les lignes visibles
+
+        # Headers
+        self.headers = ["Fichier", "Type", "Statut", "Progrès", "Vitesse", "ETA", "Taille", "Destination"]
+
+        # Pagination virtuelle pour gros volumes
+        self.page_size = 100
+        self.current_page = 0
+        self.total_count = 0
+
+        # Timer pour les mises à jour différées (évite le spam)
+        self.update_timer = QTimer()
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self._delayed_refresh)
+
+        # Batch updates pour éviter les refresh constants
+        self.pending_updates = set()
+        self.batch_timer = QTimer()
+        self.batch_timer.timeout.connect(self._process_batch_updates)
+        self.batch_timer.start(500)  # Traiter toutes les 500ms
+
+        # Connecter aux signaux OPTIMISÉS
+        self.transfer_manager.transfer_added.connect(self.queue_refresh)
+        self.transfer_manager.transfer_removed.connect(self.queue_refresh)
+
+        # Utiliser les nouveaux signaux batch si disponibles
+        if hasattr(transfer_manager, 'batch_transfers_updated'):
+            transfer_manager.batch_transfers_updated.connect(self.on_batch_updated)
+        if hasattr(transfer_manager, 'stats_updated'):
+            transfer_manager.stats_updated.connect(self.on_stats_updated)
+
+        # Charger données initiales
+        self.refresh_data()
+
+    def rowCount(self, parent=QModelIndex()) -> int:
+        """Retourne le nombre total (peut être virtualisé)"""
+        return len(self.display_data)
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        return len(self.headers)
+
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            return self.headers[section]
+        return None
+
+    def data(self, index: QModelIndex, role: int):
+        if not index.isValid() or role != Qt.DisplayRole:
+            return None
+
+        row = index.row()
+        col = index.column()
+
+        if row >= len(self.display_data):
+            return None
+
+        transfer_id = self.display_data[row]
+
+        # Chargement paresseux des données
+        if transfer_id not in self.data_cache:
+            self._load_transfer_data(transfer_id)
+
+        transfer_data = self.data_cache.get(transfer_id)
+        if not transfer_data:
+            return None
+
+        # Mapper les colonnes
+        if col == 0:    # Fichier
+            name = transfer_data.get('file_name', '')
+            if transfer_data.get('is_individual_file', False):
+                return f"  └─ {name}"
+            return name
+        elif col == 1:  # Type
+            return transfer_data.get('type', '')
+        elif col == 2:  # Statut
+            return transfer_data.get('status', '')
+        elif col == 3:  # Progrès
+            progress = transfer_data.get('progress', 0)
+            return f"{progress}%"
+        elif col == 4:  # Vitesse
+            return transfer_data.get('speed_text', '0 B/s')
+        elif col == 5:  # ETA
+            return transfer_data.get('eta_text', '∞')
+        elif col == 6:  # Taille
+            return transfer_data.get('size_text', '')
+        elif col == 7:  # Destination
+            return transfer_data.get('destination', '')
+
+        return None
+
+    def _load_transfer_data(self, transfer_id: str) -> None:
+        """Charge les données d'un transfert spécifique (paresseux)"""
+        transfer = self.transfer_manager.get_transfer(transfer_id)
+        if not transfer:
+            return
+
+        # Créer entrée cache avec données formatées
+        self.data_cache[transfer_id] = {
+            'file_name': transfer.file_name,
+            'type': transfer.transfer_type.value,
+            'status': transfer.status.value,
+            'progress': transfer.progress,
+            'speed_text': transfer.get_speed_text() if hasattr(transfer, 'get_speed_text') else '0 B/s',
+            'eta_text': transfer.get_eta_text() if hasattr(transfer, 'get_eta_text') else '∞',
+            'size_text': self._format_size(transfer.file_size),
+            'destination': transfer.destination_path,
+            'is_individual_file': transfer.is_individual_file()
+        }
+
+    def _format_size(self, size_bytes: int) -> str:
+        """Formate la taille rapidement"""
+        if size_bytes == 0:
+            return ""
+
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} TB"
+
+    def refresh_data(self) -> None:
+        """Rafraîchit les données avec optimisation pour gros volumes"""
+        self.beginResetModel()
+
+        # Vider les caches
+        self.display_data.clear()
+        self.data_cache.clear()
+
+        try:
+            if self.status_filter:
+                # Utiliser la méthode optimisée si disponible
+                if hasattr(self.transfer_manager, 'get_transfers_by_status_fast'):
+                    transfer_ids = self.transfer_manager.get_transfers_by_status_fast(
+                        self.status_filter, limit=1000  # Limiter pour éviter le lag
+                    )
+                    self.display_data.extend(transfer_ids)
+                else:
+                    # Fallback vers méthode classique
+                    individual_files = self.transfer_manager.get_individual_file_transfers()
+                    filtered_ids = [tid for tid, t in individual_files.items()
+                                  if t.status == self.status_filter]
+                    self.display_data.extend(filtered_ids[:1000])  # Limiter à 1000
+            else:
+                # Tous les fichiers individuels (avec limite)
+                individual_files = self.transfer_manager.get_individual_file_transfers()
+                self.display_data.extend(list(individual_files.keys())[:1000])
+
+        except Exception as e:
+            print(f"Erreur refresh_data: {e}")
+
+        self.endResetModel()
+
+    def queue_refresh(self) -> None:
+        """Queue un refresh pour éviter le spam"""
+        if not self.update_timer.isActive():
+            self.update_timer.start(300)  # Attendre 300ms
+
+    def _delayed_refresh(self) -> None:
+        """Refresh différé"""
+        self.refresh_data()
+
+    def on_batch_updated(self, transfer_ids: list) -> None:
+        """Traite les mises à jour par batch"""
+        # Marquer ces transferts pour mise à jour
+        for transfer_id in transfer_ids:
+            if transfer_id in self.data_cache:
+                # Invalider le cache pour forcer le rechargement
+                del self.data_cache[transfer_id]
+
+        # Invalider les lignes affichées
+        self.queue_refresh()
+
+    def on_stats_updated(self, stats: dict) -> None:
+        """Mise à jour des statistiques (peut déclencher refresh si nécessaire)"""
+        # Pour les gros volumes, on évite les refresh constants
+        pass
+
+    def _process_batch_updates(self) -> None:
+        """Traite les mises à jour en attente par batch"""
+        if self.pending_updates:
+            # Invalider les caches des transferts mis à jour
+            for transfer_id in self.pending_updates:
+                if transfer_id in self.data_cache:
+                    del self.data_cache[transfer_id]
+
+            self.pending_updates.clear()
+
+            # Émettre signal de changement de données pour la plage visible
+            if self.display_data:
+                top_left = self.index(0, 0)
+                bottom_right = self.index(min(len(self.display_data) - 1, 100), self.columnCount() - 1)
+                self.dataChanged.emit(top_left, bottom_right)
+
+    def get_transfer_id_from_row(self, row: int) -> str:
+        """Récupère l'ID du transfert à partir d'une ligne"""
+        if 0 <= row < len(self.display_data):
+            return self.display_data[row]
+        return None
+
+
 class TransferStatsWidget(QWidget):
-    """Widget d'affichage des statistiques de transfert"""
+    """Widget d'affichage des statistiques - VERSION OPTIMISÉE"""
 
     def __init__(self, transfer_manager: TransferManager):
-        """
-        Initialise le widget de statistiques
-
-        Args:
-            transfer_manager: Gestionnaire de transferts
-        """
         super().__init__()
         self.transfer_manager = transfer_manager
         self.setup_ui()
 
-        # Timer pour les mises à jour
-        self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_stats)
-        # Démarrer après un délai pour laisser le temps à tout de s'initialiser
-        QTimer.singleShot(2000, self.start_updates)
-
-    def start_updates(self) -> None:
-        """Démarre les mises à jour automatiques"""
-        self.update_timer.start(1000)  # Mise à jour chaque seconde
-        self.update_stats()  # Première mise à jour immédiate
+        # Utiliser les signaux optimisés si disponibles
+        if hasattr(transfer_manager, 'stats_updated'):
+            transfer_manager.stats_updated.connect(self.update_stats_fast)
+        else:
+            # Fallback vers timer classique
+            self.update_timer = QTimer()
+            self.update_timer.timeout.connect(self.update_stats)
+            QTimer.singleShot(2000, self.start_updates)
 
     def setup_ui(self) -> None:
         """Configure l'interface utilisateur"""
@@ -88,70 +292,70 @@ class TransferStatsWidget(QWidget):
 
         self.setLayout(layout)
 
-    def update_stats(self) -> None:
-        """Met à jour les statistiques affichées"""
+    def update_stats_fast(self, stats: dict) -> None:
+        """Mise à jour rapide avec les compteurs pré-calculés"""
         try:
-            if not hasattr(self, 'transfer_manager') or self.transfer_manager is None:
-                return
+            total = sum(stats.values())
+            active = stats.get(TransferStatus.IN_PROGRESS, 0) + stats.get(TransferStatus.PENDING, 0)
+            completed = stats.get(TransferStatus.COMPLETED, 0)
+            errors = stats.get(TransferStatus.ERROR, 0)
 
-            # NOUVEAU : Statistiques basées sur les fichiers individuels pour les queues
-            all_transfers = self.transfer_manager.get_all_transfers()
-            individual_files = self.transfer_manager.get_individual_file_transfers()
-            main_transfers = self.transfer_manager.get_main_transfers()
+            self.total_label.setText(f"📊 Total: {total}")
+            self.active_label.setText(f"🔄 Actifs: {active}")
+            self.completed_label.setText(f"✅ Terminés: {completed}")
+            self.errors_label.setText(f"❌ Erreurs: {errors}")
 
-            # Pour les stats, on compte les fichiers individuels + les transferts simples (non-dossiers)
-            active_individual = {tid: t for tid, t in individual_files.items()
-                                 if t.status in [TransferStatus.PENDING, TransferStatus.IN_PROGRESS,
-                                                 TransferStatus.PAUSED]}
+            # Calculer progrès global (approximatif pour les performances)
+            if active > 0:
+                # Estimation basée sur les ratios
+                estimated_progress = (completed / max(total, 1)) * 100
+                self.global_progress.setValue(int(estimated_progress))
 
-            completed_individual = {tid: t for tid, t in individual_files.items()
-                                    if t.status == TransferStatus.COMPLETED}
-
-            error_individual = {tid: t for tid, t in individual_files.items()
-                                if t.status == TransferStatus.ERROR}
-
-            # Ajouter les transferts simples (non-dossiers)
-            simple_transfers = {tid: t for tid, t in main_transfers.items()
-                                if not t.is_folder_transfer()}
-
-            active_simple = {tid: t for tid, t in simple_transfers.items()
-                             if t.status in [TransferStatus.PENDING, TransferStatus.IN_PROGRESS, TransferStatus.PAUSED]}
-
-            completed_simple = {tid: t for tid, t in simple_transfers.items()
-                                if t.status == TransferStatus.COMPLETED}
-
-            error_simple = {tid: t for tid, t in simple_transfers.items()
-                            if t.status == TransferStatus.ERROR}
-
-            total_count = len(individual_files) + len(simple_transfers)
-            active_count = len(active_individual) + len(active_simple)
-            completed_count = len(completed_individual) + len(completed_simple)
-            error_count = len(error_individual) + len(error_simple)
-
-            # Mettre à jour les labels
-            self.total_label.setText(f"📊 Total: {total_count}")
-            self.active_label.setText(f"🔄 Actifs: {active_count}")
-            self.completed_label.setText(f"✅ Terminés: {completed_count}")
-            self.errors_label.setText(f"❌ Erreurs: {error_count}")
-
-            # Calculer le progrès global et la vitesse (seulement sur les actifs)
-            if active_count > 0:
-                all_active = {**active_individual, **active_simple}
-                total_progress = sum(t.progress for t in all_active.values())
-                global_progress = total_progress / len(all_active)
-                total_speed = sum(t.speed for t in all_active.values())
-
-                self.global_progress.setValue(int(global_progress))
+                # Vitesse globale approximative
+                active_transfers = self.transfer_manager.get_active_transfers()
+                total_speed = sum(t.speed for t in list(active_transfers.values())[:50])  # Échantillon
                 self.speed_label.setText(f"⚡ Vitesse: {self.format_speed(total_speed)}")
             else:
-                self.global_progress.setValue(0)
+                self.global_progress.setValue(100 if completed > 0 else 0)
                 self.speed_label.setText("⚡ Vitesse: 0 B/s")
 
         except Exception as e:
-            print(f"Erreur dans update_stats: {e}")
+            print(f"Erreur update_stats_fast: {e}")
+
+    def start_updates(self) -> None:
+        """Démarre les mises à jour classiques (fallback)"""
+        self.update_timer.start(2000)  # Moins fréquent pour éviter la charge
+        self.update_stats()
+
+    def update_stats(self) -> None:
+        """Mise à jour classique (fallback)"""
+        try:
+            if hasattr(self.transfer_manager, 'get_fast_stats'):
+                stats = self.transfer_manager.get_fast_stats()
+                self.update_stats_fast(stats)
+            else:
+                # Fallback vers calcul manuel (moins optimal)
+                all_transfers = self.transfer_manager.get_all_transfers()
+                individual_files = {tid: t for tid, t in all_transfers.items() if t.is_individual_file()}
+
+                counts = {
+                    TransferStatus.PENDING: 0,
+                    TransferStatus.IN_PROGRESS: 0,
+                    TransferStatus.COMPLETED: 0,
+                    TransferStatus.ERROR: 0
+                }
+
+                for transfer in individual_files.values():
+                    if transfer.status in counts:
+                        counts[transfer.status] += 1
+
+                self.update_stats_fast(counts)
+
+        except Exception as e:
+            print(f"Erreur update_stats: {e}")
 
     def format_speed(self, speed: float) -> str:
-        """Formate la vitesse en bytes/seconde"""
+        """Formate la vitesse"""
         if speed < 1024:
             return f"{speed:.1f} B/s"
         elif speed < 1024 * 1024:
@@ -163,7 +367,7 @@ class TransferStatsWidget(QWidget):
 
 
 class TransferPanel(QWidget):
-    """Panneau principal de gestion des transferts - VERSION CORRIGÉE"""
+    """Panneau principal de gestion des transferts - VERSION OPTIMISÉE"""
 
     # Signaux pour la communication avec la fenêtre principale
     cancel_transfer_requested = pyqtSignal(str)  # transfer_id
@@ -404,30 +608,23 @@ class TransferPanel(QWidget):
 
 
 class TransferQueuePanel(QWidget):
-    """Panneau affichant la queue des transferts - VERSION CORRIGÉE avec mises à jour"""
+    """Panneau de queue OPTIMISÉ pour gros volumes"""
 
     def __init__(self, transfer_manager: TransferManager):
-        """
-        Initialise le panneau de queue de transferts
-
-        Args:
-            transfer_manager: Gestionnaire de transferts
-        """
         super().__init__()
         self.transfer_manager = transfer_manager
         self.setup_ui()
         self.connect_signals()
 
-        # NOUVEAU : Timer pour rafraîchir les proxy models
+        # Timer optimisé pour rafraîchissement
         self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.refresh_all_proxies)
-        self.refresh_timer.start(2000)  # Rafraîchir toutes les 2 secondes
+        self.refresh_timer.timeout.connect(self.refresh_current_model)
+        self.refresh_timer.start(1000)  # 1 seconde
 
     def setup_ui(self) -> None:
-        """Configure l'interface utilisateur"""
+        """Configure l'interface avec modèles optimisés"""
         layout = QVBoxLayout(self)
 
-        # Titre du panneau
         title_label = QLabel("📋 Queue de transferts (Fichiers individuels)")
         title_font = QFont()
         title_font.setBold(True)
@@ -435,175 +632,114 @@ class TransferQueuePanel(QWidget):
         title_label.setFont(title_font)
         layout.addWidget(title_label)
 
-        # MODIFIÉ : Créer un modèle pour les fichiers individuels seulement
-        self.main_model = TransferListModel(self.transfer_manager, show_individual_files=True)
-
-        # Créer le widget d'onglets pour les différents statuts
+        # Créer les modèles optimisés pour chaque statut
         self.status_tabs = QTabWidget()
-        self.create_queue_views()
+        self.models = {}
+        self.views = {}
+
+        # Créer un modèle par statut pour optimiser
+        statuses = [
+            (TransferStatus.IN_PROGRESS, "🔄 En cours"),
+            (TransferStatus.PENDING, "⏳ En attente"),
+            (TransferStatus.ERROR, "❌ Erreurs"),
+            (TransferStatus.COMPLETED, "✅ Terminés"),
+            (TransferStatus.CANCELLED, "🚫 Annulés"),
+            (TransferStatus.PAUSED, "⏸️ Suspendus")
+        ]
+
+        for i, (status, tab_name) in enumerate(statuses):
+            # Créer modèle dédié pour ce statut avec optimisation
+            model = OptimizedTransferModel(self.transfer_manager, status)
+            self.models[status] = model
+
+            # Créer vue optimisée
+            view = QTableView()  # Plus rapide que TreeView pour de gros volumes
+            view.setModel(model)
+            view.setAlternatingRowColors(True)
+            view.setSelectionBehavior(QAbstractItemView.SelectRows)
+            view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            view.setSortingEnabled(True)
+            self.views[status] = view
+
+            # Créer onglet
+            tab_widget = QWidget()
+            tab_layout = QVBoxLayout(tab_widget)
+            tab_layout.addWidget(view)
+
+            self.status_tabs.addTab(tab_widget, f"{tab_name} (0)")
+
         layout.addWidget(self.status_tabs)
 
-    def create_queue_views(self) -> None:
-        """Crée les vues pour chaque état de transfert sous forme d'onglets"""
-        # Onglet pour les transferts en cours
-        in_progress_tab = QWidget()
-        in_progress_layout = QVBoxLayout(in_progress_tab)
-
-        self.in_progress_proxy = CustomTransferProxyModel()
-        self.in_progress_proxy.setSourceModel(self.main_model)
-        self.in_progress_proxy.setFilterKeyColumn(2)  # Colonne de statut
-        self.in_progress_proxy.setFilterFixedString(TransferStatus.IN_PROGRESS.value)
-
-        self.in_progress_view = TransferTreeView()
-        self.in_progress_view.setModel(self.in_progress_proxy)
-        in_progress_layout.addWidget(self.in_progress_view)
-
-        # Onglet pour les transferts en attente
-        pending_tab = QWidget()
-        pending_layout = QVBoxLayout(pending_tab)
-
-        self.pending_proxy = CustomTransferProxyModel()
-        self.pending_proxy.setSourceModel(self.main_model)
-        self.pending_proxy.setFilterKeyColumn(2)  # Colonne de statut
-        self.pending_proxy.setFilterFixedString(TransferStatus.PENDING.value)
-
-        self.pending_view = TransferTreeView()
-        self.pending_view.setModel(self.pending_proxy)
-        pending_layout.addWidget(self.pending_view)
-
-        # Onglet pour les transferts en erreur
-        error_tab = QWidget()
-        error_layout = QVBoxLayout(error_tab)
-
-        self.error_proxy = CustomTransferProxyModel()
-        self.error_proxy.setSourceModel(self.main_model)
-        self.error_proxy.setFilterKeyColumn(2)  # Colonne de statut
-        self.error_proxy.setFilterFixedString(TransferStatus.ERROR.value)
-
-        self.error_view = TransferTreeView()
-        self.error_view.setModel(self.error_proxy)
-        error_layout.addWidget(self.error_view)
-
-        # Onglet pour les transferts terminés
-        completed_tab = QWidget()
-        completed_layout = QVBoxLayout(completed_tab)
-
-        self.completed_proxy = CustomTransferProxyModel()
-        self.completed_proxy.setSourceModel(self.main_model)
-        self.completed_proxy.setFilterKeyColumn(2)  # Colonne de statut
-        self.completed_proxy.setFilterFixedString(TransferStatus.COMPLETED.value)
-
-        self.completed_view = TransferTreeView()
-        self.completed_view.setModel(self.completed_proxy)
-        completed_layout.addWidget(self.completed_view)
-
-        # Onglet pour les transferts annulés
-        cancelled_tab = QWidget()
-        cancelled_layout = QVBoxLayout(cancelled_tab)
-
-        self.cancelled_proxy = CustomTransferProxyModel()
-        self.cancelled_proxy.setSourceModel(self.main_model)
-        self.cancelled_proxy.setFilterKeyColumn(2)  # Colonne de statut
-        self.cancelled_proxy.setFilterFixedString(TransferStatus.CANCELLED.value)
-
-        self.cancelled_view = TransferTreeView()
-        self.cancelled_view.setModel(self.cancelled_proxy)
-        cancelled_layout.addWidget(self.cancelled_view)
-
-        # Onglet pour les transferts suspendus
-        paused_tab = QWidget()
-        paused_layout = QVBoxLayout(paused_tab)
-
-        self.paused_proxy = CustomTransferProxyModel()
-        self.paused_proxy.setSourceModel(self.main_model)
-        self.paused_proxy.setFilterKeyColumn(2)  # Colonne de statut
-        self.paused_proxy.setFilterFixedString(TransferStatus.PAUSED.value)
-
-        self.paused_view = TransferTreeView()
-        self.paused_view.setModel(self.paused_proxy)
-        paused_layout.addWidget(self.paused_view)
-
-        # Ajouter les onglets au widget d'onglets avec compteurs
-        self.update_tab_titles()
-        self.status_tabs.addTab(in_progress_tab, "🔄 En cours (0)")
-        self.status_tabs.addTab(pending_tab, "⏳ En attente (0)")
-        self.status_tabs.addTab(error_tab, "❌ Erreurs (0)")
-        self.status_tabs.addTab(completed_tab, "✅ Terminés (0)")
-        self.status_tabs.addTab(cancelled_tab, "🚫 Annulés (0)")
-        self.status_tabs.addTab(paused_tab, "⏸️ Suspendus (0)")
-
     def connect_signals(self) -> None:
-        """Connecte les signaux"""
-        # Connecter aux changements du gestionnaire de transferts
-        self.transfer_manager.transfer_added.connect(self.update_tab_titles)
-        self.transfer_manager.transfer_removed.connect(self.update_tab_titles)
-        self.transfer_manager.transfer_status_changed.connect(self.update_tab_titles)
+        """Connecte aux signaux optimisés"""
+        if hasattr(self.transfer_manager, 'stats_updated'):
+            self.transfer_manager.stats_updated.connect(self.update_tab_titles_fast)
 
-    def refresh_all_proxies(self) -> None:
-        """Force le rafraîchissement de tous les proxy models"""
+    def refresh_current_model(self) -> None:
+        """Rafraîchit seulement le modèle de l'onglet visible (optimisation)"""
         try:
-            for proxy in [self.in_progress_proxy, self.pending_proxy, self.error_proxy,
-                          self.completed_proxy, self.cancelled_proxy, self.paused_proxy]:
-                proxy.invalidateFilter()
-
-            # Mettre à jour les titres des onglets
-            self.update_tab_titles()
+            # Refresh seulement l'onglet visible pour économiser les ressources
+            current_index = self.status_tabs.currentIndex()
+            if current_index >= 0:
+                statuses = list(self.models.keys())
+                if current_index < len(statuses):
+                    current_status = statuses[current_index]
+                    self.models[current_status].queue_refresh()
         except Exception as e:
-            print(f"Erreur lors du rafraîchissement des proxies: {e}")
+            print(f"Erreur refresh_current_model: {e}")
 
-    def update_tab_titles(self) -> None:
-        """Met à jour les titres des onglets avec les compteurs"""
+    def update_tab_titles_fast(self, stats: dict) -> None:
+        """Met à jour les titres avec les stats pré-calculées"""
         try:
-            # Compter les fichiers individuels par statut
-            individual_files = self.transfer_manager.get_individual_file_transfers()
+            titles = [
+                (TransferStatus.IN_PROGRESS, "🔄 En cours"),
+                (TransferStatus.PENDING, "⏳ En attente"),
+                (TransferStatus.ERROR, "❌ Erreurs"),
+                (TransferStatus.COMPLETED, "✅ Terminés"),
+                (TransferStatus.CANCELLED, "🚫 Annulés"),
+                (TransferStatus.PAUSED, "⏸️ Suspendus")
+            ]
 
-            counts = {
-                TransferStatus.IN_PROGRESS: 0,
-                TransferStatus.PENDING: 0,
-                TransferStatus.ERROR: 0,
-                TransferStatus.COMPLETED: 0,
-                TransferStatus.CANCELLED: 0,
-                TransferStatus.PAUSED: 0
-            }
-
-            for transfer in individual_files.values():
-                if transfer.status in counts:
-                    counts[transfer.status] += 1
-
-            # Mettre à jour les titres
-            self.status_tabs.setTabText(0, f"🔄 En cours ({counts[TransferStatus.IN_PROGRESS]})")
-            self.status_tabs.setTabText(1, f"⏳ En attente ({counts[TransferStatus.PENDING]})")
-            self.status_tabs.setTabText(2, f"❌ Erreurs ({counts[TransferStatus.ERROR]})")
-            self.status_tabs.setTabText(3, f"✅ Terminés ({counts[TransferStatus.COMPLETED]})")
-            self.status_tabs.setTabText(4, f"🚫 Annulés ({counts[TransferStatus.CANCELLED]})")
-            self.status_tabs.setTabText(5, f"⏸️ Suspendus ({counts[TransferStatus.PAUSED]})")
+            for i, (status, base_title) in enumerate(titles):
+                count = stats.get(status, 0)
+                # Limiter l'affichage pour éviter les nombres trop grands
+                display_count = f"{count}" if count < 1000 else f"{count//1000}k+"
+                self.status_tabs.setTabText(i, f"{base_title} ({display_count})")
 
         except Exception as e:
-            print(f"Erreur lors de la mise à jour des titres d'onglets: {e}")
+            print(f"Erreur update_tab_titles_fast: {e}")
 
     def update_column_widths(self) -> None:
         """Ajuste la largeur des colonnes pour toutes les vues"""
-        for view in [self.in_progress_view, self.pending_view, self.error_view,
-                     self.completed_view, self.cancelled_view, self.paused_view]:
-            header = view.header()
-            header.setSectionResizeMode(0, QHeaderView.Stretch)  # Nom du fichier
-            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
-            header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Statut
-            header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Progrès
-            header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Vitesse
-            header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # ETA
-            header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Taille
+        for view in self.views.values():
+            if hasattr(view, 'header'):
+                header = view.header()
+                header.setSectionResizeMode(0, QHeaderView.Stretch)  # Nom du fichier
+                header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
+                header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Statut
+                header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Progrès
+                header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Vitesse
+                header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # ETA
+                header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Taille
 
 
 class CustomTransferProxyModel(QSortFilterProxyModel):
     """Proxy model personnalisé pour les transferts avec meilleur rafraîchissement"""
+
+    MAX_ROWS = 1000  # Maximum 1000 lignes affichées pour éviter le lag
 
     def __init__(self):
         super().__init__()
         # Actualiser automatiquement quand le modèle source change
         self.setDynamicSortFilter(True)
 
+    def rowCount(self, parent=None):
+        """Limite le nombre de lignes affichées"""
+        original_count = super().rowCount(parent)
+        return min(original_count, self.MAX_ROWS)
+
     def filterAcceptsRow(self, source_row, source_parent):
-        """Détermine si une ligne doit être affichée"""
-        # Laisser le filtre par défaut faire son travail
+        """Accepte seulement les N premières lignes + filtre normal"""
+        if source_row >= self.MAX_ROWS:
+            return False
         return super().filterAcceptsRow(source_row, source_parent)
