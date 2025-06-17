@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
 import random
+from utils.google_drive_utils import  already_exists_in_folder
 
 from core.google_drive_client import GoogleDriveClient
 from models.transfer_models import TransferManager, TransferType, TransferStatus
@@ -82,6 +83,14 @@ class SafeGoogleDriveUploader:
                     )
                     return file_id
                 except Exception as e:
+
+                    # Vérifier si le fichier existe déjà dans le dossier
+                    file_name = os.path.basename(file_path)
+                    if already_exists_in_folder(drive_client, parent_id, file_name):
+                        # Si le fichier existe déjà, on peut skippper
+                        drive_client.close()
+                        break
+
                     # Fermer le client en cas d'erreur
                     drive_client.close()
                     raise e
@@ -223,8 +232,8 @@ class SafeFolderUploadThread(QThread):
         self.parent_id = parent_id
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
-        # Limiter à un maximum sécurisé
-        self.max_parallel_uploads = max(max_parallel_uploads, 10)
+        # Limiter à un maximum sécurisé25
+        self.max_parallel_uploads = max(max_parallel_uploads, 10 )
         self.total_files = 0
         self.uploaded_files = 0
         self.failed_files = 0
@@ -281,7 +290,7 @@ class SafeFolderUploadThread(QThread):
     def create_folder_structure_safe(self, folder_path: str, parent_id: str) -> Dict[str, str]:
         """Crée la structure de dossiers de manière sécurisée"""
         folder_mapping = {'': parent_id}
-
+        
         try:
             # Créer les dossiers un par un avec délais
             for root, dirs, files in os.walk(folder_path):
@@ -303,7 +312,10 @@ class SafeFolderUploadThread(QThread):
                     # Retry pour la création de dossiers
                     for attempt in range(3):
                         try:
-                            folder_id = self.drive_client.create_folder(
+                            # Ajoutez ce type d’appel à chaque opération Drive pour isolation SSL :
+                            fresh_client = self.get_fresh_client()
+                            # Utilisez ensuite fresh_client pour vos opérations Google Drive (création de dossier, etc.)
+                            folder_id = fresh_client.create_folder(
                                 folder_name, parent_drive_id, self.is_shared_drive
                             )
                             folder_mapping[rel_path] = folder_id
@@ -322,6 +334,10 @@ class SafeFolderUploadThread(QThread):
             self.error_signal.emit(f"Erreur création dossiers: {str(e)}")
 
         return folder_mapping
+
+    def get_fresh_client(self) -> GoogleDriveClient:
+        """Crée une nouvelle instance de client Google Drive"""
+        return SafeGoogleDriveUploader.get_fresh_client()
 
     def upload_files_batch_safe(self, file_batch: List[Dict[str, Any]],
                                folder_mapping: Dict[str, str]) -> List[Dict[str, Any]]:
@@ -465,7 +481,10 @@ class SafeFolderUploadThread(QThread):
 
             if self.total_files == 0:
                 self.status_signal.emit("📁 Dossier vide, création uniquement...")
-                folder_id = self.drive_client.create_folder(folder_name, self.parent_id, self.is_shared_drive)
+                # Ajoutez ce type d’appel à chaque opération Drive pour isolation SSL :
+                fresh_client = self.get_fresh_client()
+                # Utilisez ensuite fresh_client pour vos opérations Google Drive (création de dossier, etc.)
+                folder_id = fresh_client.create_folder(folder_name, self.parent_id, self.is_shared_drive)
                 self.completed_signal.emit(folder_id)
                 return
 
@@ -482,7 +501,10 @@ class SafeFolderUploadThread(QThread):
             self.status_signal.emit(f"🚀 Analyse: {self.total_files} fichiers...")
 
             # Créer le dossier racine
-            main_folder_id = self.drive_client.create_folder(folder_name, self.parent_id, self.is_shared_drive)
+            # Ajoutez ce type d’appel à chaque opération Drive pour isolation SSL :
+            fresh_client = self.get_fresh_client()
+            # Utilisez ensuite fresh_client pour vos opérations Google Drive (création de dossier, etc.)
+            main_folder_id = fresh_client.create_folder(folder_name, self.parent_id, self.is_shared_drive)
 
             # Créer la structure de dossiers de manière sécurisée
             self.status_signal.emit("📁 Création structure...")
