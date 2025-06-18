@@ -214,7 +214,7 @@ class SafeFolderUploadThread(QThread):
     def __init__(self, drive_client: GoogleDriveClient, folder_path: str,
                  parent_id: str = 'root', is_shared_drive: bool = False,
                  transfer_manager: Optional[TransferManager] = None,
-                 max_parallel_uploads: int = 3):  # Par défaut 1 pour la sécurité
+                 max_parallel_uploads_provider: callable = lambda: 3):  # Fournisseur pour max_parallel_uploads
         """
         Initialise le thread d'upload de dossier sécurisé
 
@@ -224,7 +224,7 @@ class SafeFolderUploadThread(QThread):
             parent_id: ID du dossier parent de destination
             is_shared_drive: True si c'est un Shared Drive
             transfer_manager: Gestionnaire de transferts
-            max_parallel_uploads: Nombre maximum d'uploads simultanés (recommandé: 1-2)
+            max_parallel_uploads_provider: Fonction callable qui retourne le nombre max d'uploads.
         """
         super().__init__()
         self.drive_client = drive_client
@@ -232,8 +232,7 @@ class SafeFolderUploadThread(QThread):
         self.parent_id = parent_id
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
-        # Limiter à un maximum sécurisé25
-        self.max_parallel_uploads = max(max_parallel_uploads, 10 )
+        self.get_max_parallel_uploads = max_parallel_uploads_provider
         self.total_files = 0
         self.uploaded_files = 0
         self.failed_files = 0
@@ -344,6 +343,9 @@ class SafeFolderUploadThread(QThread):
         """Upload un batch de fichiers de manière ultra-sécurisée"""
         results = []
 
+        current_max_parallel = self.get_max_parallel_uploads()
+        current_max_parallel = max(1, min(current_max_parallel, 10)) # Clamping for safety
+
         def upload_single_file_safe(file_info):
             """Upload sécurisé d'un seul fichier"""
             try:
@@ -376,8 +378,8 @@ class SafeFolderUploadThread(QThread):
                     'file_info': file_info
                 }
 
-        # Upload séquentiel si max_parallel_uploads = 1, sinon parallèle limité
-        if self.max_parallel_uploads == 1:
+        # Upload séquentiel si current_max_parallel = 1, sinon parallèle limité
+        if current_max_parallel == 1:
             # Upload séquentiel - plus sûr
             for file_info in file_batch:
                 if self.is_cancelled:
@@ -417,9 +419,9 @@ class SafeFolderUploadThread(QThread):
                 # Délai entre uploads pour éviter le rate limiting
                 if not self.is_cancelled:
                     time.sleep(0.001)  # 100ms entre chaque fichier
-        else:
+        elif current_max_parallel > 1:
             # Upload parallèle très limité et sécurisé
-            with ThreadPoolExecutor(max_workers=self.max_parallel_uploads) as executor:
+            with ThreadPoolExecutor(max_workers=current_max_parallel) as executor:
                 # Soumettre les uploads avec délais
                 futures = []
                 for i, file_info in enumerate(file_batch):
@@ -520,7 +522,12 @@ class SafeFolderUploadThread(QThread):
             batch_size = max(1, min(100, len(all_files)))  # Batch très petit
             file_batches = [all_files[i:i + batch_size] for i in range(0, len(all_files), batch_size)]
 
-            self.status_signal.emit(f"⚡ Upload: {self.total_files} fichiers (mode: {'séquentiel' if self.max_parallel_uploads == 1 else 'parallèle limité'})...")
+            # Note: The status message about sequential/parallel mode might be slightly off here
+            # if the provider changes the value mid-upload for different batches.
+            # For now, we'll base it on the initial value fetched in run() for the message.
+            # A more accurate message would require fetching it again or passing it around.
+            initial_max_parallel = max(1, min(self.get_max_parallel_uploads(), 10))
+            self.status_signal.emit(f"⚡ Upload: {self.total_files} fichiers (mode: {'séquentiel' if initial_max_parallel == 1 else 'parallèle limité'})...")
 
             # Traiter chaque batch avec délais
             all_errors = []

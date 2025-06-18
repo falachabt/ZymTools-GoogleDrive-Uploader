@@ -823,17 +823,6 @@ class DriveExplorerMainWindow(QMainWindow):
             is_shared_drive = self.drive_client.is_shared_drive(self.drive_model.current_drive_id)
 
             # Afficher une boîte de dialogue de choix de mode pour les gros dossiers
-            folder_count = sum(1 for row, name in items_to_upload
-                               if os.path.isdir(os.path.join(self.local_model.current_path, name)))
-
-            if folder_count > 0:
-                # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 10
-                if upload_mode is None:
-                    return  # Annulé
-            else:
-                upload_mode = 1  # Séquentiel pour les fichiers simples
-
             for row, name in items_to_upload:
                 item_path = os.path.join(self.local_model.current_path, name)
 
@@ -856,7 +845,7 @@ class DriveExplorerMainWindow(QMainWindow):
                     folder_upload_thread = SafeFolderUploadThread(
                         self.drive_client, item_path, destination_id,
                         is_shared_drive, self.transfer_manager,
-                        max_parallel_uploads=upload_mode  # Mode choisi par l'utilisateur
+                        max_parallel_uploads_provider=self.transfer_panel.get_current_max_parallel_uploads
                     )
                     folder_upload_thread.progress_signal.connect(self.update_progress)
                     folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
@@ -1664,17 +1653,6 @@ class DriveExplorerMainWindow(QMainWindow):
             destination_id = self.drive_model.current_path_id
             is_shared_drive = self.drive_client.is_shared_drive(self.drive_model.current_drive_id)
 
-            # Compter les dossiers pour choisir le mode
-            folder_count = sum(1 for path in file_paths if os.path.isdir(path))
-
-            if folder_count > 0:
-                # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 10
-                if upload_mode is None:
-                    return  # Annulé
-            else:
-                upload_mode = 1  # Séquentiel pour les fichiers simples
-
             for file_path in file_paths:
                 if os.path.isfile(file_path):
                     upload_thread = UploadThread(
@@ -1693,7 +1671,7 @@ class DriveExplorerMainWindow(QMainWindow):
                     folder_upload_thread = SafeFolderUploadThread(
                         self.drive_client, file_path, destination_id,
                         is_shared_drive, self.transfer_manager,
-                        max_parallel_uploads=upload_mode
+                        max_parallel_uploads_provider=self.transfer_panel.get_current_max_parallel_uploads
                     )
                     folder_upload_thread.progress_signal.connect(self.update_progress)
                     folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
@@ -1706,7 +1684,9 @@ class DriveExplorerMainWindow(QMainWindow):
             # Afficher l'onglet des transferts
             self.show_transfers_tab()
 
-            mode_text = "sécurisé" if upload_mode == 1 else "rapide"
+            # Get the current value for the status message
+            current_max_uploads = self.transfer_panel.get_current_max_parallel_uploads()
+            mode_text = "séquentiel" if current_max_uploads == 1 else f"parallèle ({current_max_uploads})"
             self.status_bar.showMessage(f"🚀 Upload de {len(file_paths)} élément(s) en mode {mode_text}...")
 
         except Exception as e:

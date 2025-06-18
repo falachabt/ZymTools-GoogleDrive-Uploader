@@ -5,7 +5,7 @@ Vue pour afficher et gérer la liste des transferts
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView,
                              QPushButton, QToolBar, QAction, QLabel,
                              QProgressBar, QSplitter, QGroupBox, QMenu,
-                             QHeaderView, QAbstractItemView)
+                             QHeaderView, QAbstractItemView, QSpinBox)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize
 from PyQt5.QtGui import QFont
 
@@ -160,10 +160,9 @@ class TransferPanel(QWidget):
         """
         super().__init__()
         self.transfer_manager = transfer_manager
-
+        self.max_parallel_uploads_value = 3  # Default value
 
         self.setup_ui()
-
 
         self.connect_signals()
 
@@ -199,6 +198,18 @@ class TransferPanel(QWidget):
         self.create_toolbar()
         content_layout.addWidget(self.toolbar)
 
+        # Max parallel uploads setting
+        settings_layout = QHBoxLayout()
+        self.max_parallel_uploads_label = QLabel("Max Parallel Uploads:")
+        self.max_parallel_uploads_spinbox = QSpinBox()
+        self.max_parallel_uploads_spinbox.setMinimum(1)
+        self.max_parallel_uploads_spinbox.setMaximum(10)
+        self.max_parallel_uploads_spinbox.setValue(self.max_parallel_uploads_value)
+
+        settings_layout.addWidget(self.max_parallel_uploads_label)
+        settings_layout.addWidget(self.max_parallel_uploads_spinbox)
+        settings_layout.addStretch()
+        content_layout.addLayout(settings_layout)
 
         # Vue des transferts
         self.transfer_model = TransferListModel(self.transfer_manager)
@@ -259,6 +270,13 @@ class TransferPanel(QWidget):
 
         # Sélection
         self.transfer_view.selectionModel().selectionChanged.connect(self.update_toolbar_state)
+
+        # Max parallel uploads
+        self.max_parallel_uploads_spinbox.valueChanged.connect(self._on_max_parallel_uploads_changed)
+
+    def _on_max_parallel_uploads_changed(self, value: int) -> None:
+        """Met à jour la valeur de max_parallel_uploads_value lorsque le QSpinBox change."""
+        self.max_parallel_uploads_value = value
 
     def show_context_menu(self, position) -> None:
         """Affiche le menu contextuel"""
@@ -398,3 +416,7 @@ class TransferPanel(QWidget):
     def get_active_transfer_count(self) -> int:
         """Retourne le nombre de transferts actifs"""
         return len(self.transfer_manager.get_active_transfers())
+
+    def get_current_max_parallel_uploads(self) -> int:
+        """Retourne la valeur actuelle du QSpinBox pour le nombre maximum de téléchargements parallèles."""
+        return self.max_parallel_uploads_spinbox.value()
