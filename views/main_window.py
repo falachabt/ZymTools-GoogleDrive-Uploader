@@ -13,10 +13,10 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QProgressBar, QLineEdit, QComboBox, QApplication,
                              QTabWidget)
 from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QKeySequence, QIcon
 
 from config.settings import (WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT,
-                             TOOLBAR_ICON_SIZE, CACHE_CLEANUP_INTERVAL_MS)
+                             TOOLBAR_ICON_SIZE, CACHE_CLEANUP_INTERVAL_MS, get_icon_path)
 from core.cache_manager import CacheManager
 from core.google_drive_client import GoogleDriveClient
 from threads.file_load_threads import LocalFileLoadThread, DriveFileLoadThread
@@ -52,6 +52,7 @@ class DriveExplorerMainWindow(QMainWindow):
         # Configuration de la fenêtre
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+        self.setWindowIcon(QIcon(get_icon_path()))
 
         # Créer l'interface utilisateur
         self.setup_ui()

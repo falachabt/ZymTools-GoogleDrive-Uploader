@@ -203,7 +203,7 @@ class TransferPanel(QWidget):
         self.max_parallel_uploads_label = QLabel("Max Parallel Uploads:")
         self.max_parallel_uploads_spinbox = QSpinBox()
         self.max_parallel_uploads_spinbox.setMinimum(1)
-        self.max_parallel_uploads_spinbox.setMaximum(10)
+        self.max_parallel_uploads_spinbox.setMaximum(100)
         self.max_parallel_uploads_spinbox.setValue(self.max_parallel_uploads_value)
 
         settings_layout.addWidget(self.max_parallel_uploads_label)

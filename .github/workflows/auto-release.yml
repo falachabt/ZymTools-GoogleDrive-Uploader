@@ -1,0 +1,274 @@
+# 🚀 Auto-Release Workflow - Google Drive Explorer
+# Ce workflow build automatiquement l'app, crée un zip et publie une release
+
+name: Auto Release
+
+# 🎯 Déclenchement sur tags de version (v1.0.0, v1.2.3, etc.)
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'test-*'  # Pour les tests, vous pouvez utiliser des tags comme test-v1.0.0
+  # Déclenchement manuel pour tests
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version à releaser (ex: v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+# 🌍 Variables d'environnement
+env:
+  APP_NAME: "ZymoSync"
+  PYTHON_VERSION: "3.9"
+
+# 🔧 Jobs
+jobs:
+  build-and-release:
+    name: 🔨 Build et Release Automatique
+    runs-on: windows-latest  # Windows pour correspondre à votre build.bat
+    
+    steps:
+    # ===== ÉTAPE 1: PRÉPARATION =====
+    - name: 📥 Checkout du code
+      uses: actions/checkout@v4
+      
+    - name: 🏷️ Extraire la version du tag
+      id: version
+      shell: bash
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          VERSION="${{ github.event.inputs.version }}"
+        else
+          VERSION=${GITHUB_REF#refs/tags/}
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📦 Version à builder: $VERSION"
+        
+        # Nettoyer la version pour le nom de fichier (enlever le 'v')
+        CLEAN_VERSION=${VERSION#v}
+        echo "clean_version=$CLEAN_VERSION" >> $GITHUB_OUTPUT
+        echo "📦 Version propre: $CLEAN_VERSION"
+        
+    # ===== ÉTAPE 2: SETUP ENVIRONNEMENT =====
+    - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: 📦 Installer les dépendances
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    # ===== ÉTAPE 3: PRÉPARATION DU BUILD =====
+    - name: 🔧 Préparer les ressources
+      run: |
+        # Créer le dossier resources s'il n'existe pas
+        if (!(Test-Path "resources")) { 
+          New-Item -ItemType Directory -Path "resources" 
+        }
+        
+        # Si credentials.json existe à la racine, le copier dans resources
+        if (Test-Path "credentials.json") {
+          Copy-Item "credentials.json" "resources/" -Force
+          Write-Host "✅ credentials.json copié dans resources/"
+        } else {
+          Write-Host "⚠️ credentials.json non trouvé, création d'un fichier placeholder"
+          '{"placeholder": "Ajoutez votre credentials.json ici"}' | Out-File -FilePath "resources/credentials.json" -Encoding UTF8
+        }
+        
+    - name: 🧹 Nettoyer les anciens builds
+      run: |
+        Write-Host "🧹 Nettoyage des anciens builds..."
+        if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
+        if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
+        Get-ChildItem -Path "." -Filter "*.spec" | Remove-Item -Force
+        Write-Host "✅ Nettoyage terminé"
+        
+    # ===== ÉTAPE 4: BUILD AVEC PYINSTALLER =====
+    - name: 🔨 Build avec PyInstaller (comme build.bat)
+      run: |
+        Write-Host "🚀 Démarrage du build avec PyInstaller..."
+        
+        # Variables (adaptées de votre build.bat)
+        $SCRIPT_NAME = "main.py"
+        $APP_NAME = "${{ env.APP_NAME }}"
+        
+        # Chemins Python (GitHub Actions utilise hostedtoolcache)
+        $PYTHON_ROOT = python -c "import sys; print(sys.executable.replace('python.exe', ''))"
+        $QT_PLUGIN_PATH = "${PYTHON_ROOT}Lib\site-packages\PyQt5\Qt5\plugins"
+        
+        Write-Host "🔍 Python root: $PYTHON_ROOT"
+        Write-Host "🔍 Qt plugins: $QT_PLUGIN_PATH"
+        
+        # Commande PyInstaller (adaptée de votre build.bat)
+        pyinstaller --onedir --windowed `
+          --hidden-import=googleapiclient.discovery `
+          --hidden-import=googleapiclient.http `
+          --hidden-import=google.auth.transport.requests `
+          --hidden-import=google.oauth2.credentials `
+          --hidden-import=charset_normalizer.md__mypyc `
+          --hidden-import=sip `
+          --collect-all PyQt5 `
+          --add-data "resources\credentials.json;." `
+          --name $APP_NAME `
+          $SCRIPT_NAME
+          
+        Write-Host "✅ Build PyInstaller terminé"
+        
+    # ===== ÉTAPE 5: VÉRIFICATION DU BUILD =====
+    - name: ✅ Vérifier le build
+      run: |
+        Write-Host "🔍 Vérification du build..."
+        
+        $DIST_PATH = "dist\${{ env.APP_NAME }}"
+        $EXE_PATH = "$DIST_PATH\${{ env.APP_NAME }}.exe"
+        
+        if (Test-Path $DIST_PATH) {
+          Write-Host "✅ Dossier dist trouvé: $DIST_PATH"
+          
+          Write-Host "📁 Contenu du dossier dist:"
+          Get-ChildItem -Path $DIST_PATH -Recurse | Select-Object Name, Length, FullName | Format-Table
+          
+          if (Test-Path $EXE_PATH) {
+            Write-Host "✅ Exécutable trouvé: $EXE_PATH"
+            $exeSize = (Get-Item $EXE_PATH).Length
+            Write-Host "📏 Taille de l'exécutable: $([math]::Round($exeSize / 1MB, 2)) MB"
+          } else {
+            Write-Host "❌ Exécutable non trouvé à $EXE_PATH"
+            exit 1
+          }
+        } else {
+          Write-Host "❌ Dossier dist non trouvé"
+          exit 1
+        }
+        
+    # ===== ÉTAPE 6: CRÉER L'ARCHIVE ZIP =====
+    - name: 📦 Créer l'archive ZIP
+      run: |
+        Write-Host "📦 Création de l'archive ZIP..."
+        
+        $VERSION = "${{ steps.version.outputs.clean_version }}"
+        $ARCHIVE_NAME = "${{ env.APP_NAME }}-v$VERSION-Windows"
+        $ARCHIVE_FILE = "$ARCHIVE_NAME.zip"
+        $DIST_PATH = "dist\${{ env.APP_NAME }}"
+        
+        # Créer le ZIP avec PowerShell
+        Compress-Archive -Path "$DIST_PATH\*" -DestinationPath $ARCHIVE_FILE -Force
+        
+        Write-Host "✅ Archive créée: $ARCHIVE_FILE"
+        
+        # Vérifier l'archive
+        if (Test-Path $ARCHIVE_FILE) {
+          $archiveSize = (Get-Item $ARCHIVE_FILE).Length
+          Write-Host "📏 Taille de l'archive: $([math]::Round($archiveSize / 1MB, 2)) MB"
+          
+          # Stocker le nom pour les étapes suivantes
+          echo "ARCHIVE_FILE=$ARCHIVE_FILE" >> $env:GITHUB_ENV
+          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $env:GITHUB_ENV
+        } else {
+          Write-Host "❌ Erreur: Archive non créée"
+          exit 1
+        }
+        
+    # ===== ÉTAPE 7: CRÉER LE CHANGELOG =====
+    - name: 📝 Générer le changelog
+      id: changelog
+      shell: bash
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        echo "📝 Génération du changelog pour $VERSION..."
+        
+        # Trouver le tag précédent
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+        
+        # Début du changelog
+        CHANGELOG="## 🚀 Release $VERSION\n\n"
+        CHANGELOG+="📅 **Date**: $(date '+%Y-%m-%d %H:%M:%S')\n\n"
+        
+        if [[ -n "$PREVIOUS_TAG" ]]; then
+          CHANGELOG+="### 🔄 Changements depuis $PREVIOUS_TAG:\n\n"
+          
+          # Récupérer les commits entre les tags
+          COMMITS=$(git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD)
+          
+          if [[ -n "$COMMITS" ]]; then
+            CHANGELOG+="$COMMITS\n\n"
+          else
+            CHANGELOG+="- Corrections mineures et améliorations\n\n"
+          fi
+        else
+          CHANGELOG+="### 🎉 Première release officielle!\n\n"
+          CHANGELOG+="- Interface moderne avec thème sombre\n"
+          CHANGELOG+="- Navigation bifurcée (local / Google Drive)\n"
+          CHANGELOG+="- Drag & Drop entre local et cloud\n"
+          CHANGELOG+="- Gestionnaire de transferts avancé\n"
+          CHANGELOG+="- Support des Shared Drives d'entreprise\n\n"
+        fi
+        
+        # Ajouter des informations techniques
+        CHANGELOG+="### 📦 Contenu de cette release:\n\n"
+        CHANGELOG+="- **Fichier**: \`${{ env.ARCHIVE_FILE }}\`\n"
+        CHANGELOG+="- **Plateforme**: Windows (x64)\n"
+        CHANGELOG+="- **Python**: ${{ env.PYTHON_VERSION }}\n"
+        CHANGELOG+="- **PyQt5**: Inclus\n\n"
+        
+        CHANGELOG+="### 🚀 Installation:\n\n"
+        CHANGELOG+="1. Télécharger le fichier ZIP ci-dessous\n"
+        CHANGELOG+="2. Extraire dans un dossier de votre choix\n"
+        CHANGELOG+="3. Exécuter \`${{ env.APP_NAME }}.exe\`\n"
+        CHANGELOG+="4. Configurer vos credentials Google Drive\n\n"
+        
+        CHANGELOG+="### ⚙️ Configuration Google Drive:\n\n"
+        CHANGELOG+="1. Créer un projet sur [Google Cloud Console](https://console.cloud.google.com/)\n"
+        CHANGELOG+="2. Activer l'API Google Drive\n"
+        CHANGELOG+="3. Créer des credentials OAuth 2.0\n"
+        CHANGELOG+="4. Télécharger le fichier JSON et le renommer \`credentials.json\`\n"
+        CHANGELOG+="5. Placer le fichier dans le même dossier que l'exécutable\n\n"
+        
+        CHANGELOG+="---\n\n"
+        CHANGELOG+="💡 **Besoin d'aide?** Consultez le [README](https://github.com/${{ github.repository }}) ou créez une [issue](https://github.com/${{ github.repository }}/issues)!"
+        
+        # Échapper pour GitHub
+        CHANGELOG_ESCAPED=$(echo -e "$CHANGELOG" | sed ':a;N;$!ba;s/\n/\\n/g')
+        echo "changelog=$CHANGELOG_ESCAPED" >> $GITHUB_OUTPUT
+        
+        echo "✅ Changelog généré"
+        
+    # ===== ÉTAPE 8: CRÉER LA RELEASE =====
+    - name: 🎉 Créer la release GitHub
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        release_name: "🚀 ${{ env.APP_NAME }} ${{ steps.version.outputs.version }}"
+        body: ${{ steps.changelog.outputs.changelog }}
+        draft: false
+        prerelease: false
+        
+    # ===== ÉTAPE 9: AJOUTER LE ZIP À LA RELEASE =====
+    - name: 📎 Ajouter le ZIP à la release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./${{ env.ARCHIVE_FILE }}
+        asset_name: ${{ env.ARCHIVE_FILE }}
+        asset_content_type: application/zip
+        
+    # ===== ÉTAPE 10: CONFIRMATION =====
+    - name: 🎉 Confirmation finale
+      run: |
+        Write-Host "🎉 RELEASE CRÉÉE AVEC SUCCÈS! 🎉"
+        Write-Host ""
+        Write-Host "📦 Version: ${{ steps.version.outputs.version }}"
+        Write-Host "📁 Archive: ${{ env.ARCHIVE_FILE }}"
+        Write-Host "🔗 URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }}"
+        Write-Host ""
+        Write-Host "✅ Les utilisateurs peuvent maintenant télécharger votre application!"

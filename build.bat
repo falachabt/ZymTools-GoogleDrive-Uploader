@@ -30,9 +30,15 @@ echo 🚀 Compilation de l'application avec PyInstaller...
   --hidden-import=google.auth.transport.requests ^
   --hidden-import=google.oauth2.credentials ^
   --hidden-import=charset_normalizer.md__mypyc ^
+  --icon=resources/icon.ico ^
   --hidden-import=sip ^
   --collect-all PyQt5 ^
-  --add-data "credentials.json;." ^
+ --add-data "resources;resources" ^
+ --add-data "models;models" ^
+    --add-data "config;config" ^
+    --add-data "threads;threads" ^
+    --add-data "views;views" ^
+    --add-data "utils;utils" ^
   --add-data "%QT_PLUGIN_PATH%;PyQt5/Qt/plugins" ^
   --add-binary "%ANACONDA_DLLS%\pyexpat.pyd;." ^
   --add-binary "%ANACONDA_LIBS%\libexpat.dll;." ^
@@ -77,7 +83,13 @@ echo ✅ Raccourci créé sur le bureau.
 
 
 REM ====== Résultat ======
+REM Suppression du dossier build
+rmdir /s /q build >nul 2>&1
+
+REM Déplacer le dossier dist un niveau plus haut
+move dist ..\dist >nul 2>&1
+
 echo.
 echo ✅ Compilation terminée !
-echo 📁 L'exécutable est disponible dans le dossier "dist\main"
+echo 📁 L'exécutable est disponible dans le dossier "..\dist\main"
 pause
