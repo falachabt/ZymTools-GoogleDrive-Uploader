@@ -121,11 +121,11 @@ jobs:
           --hidden-import=charset_normalizer.md__mypyc `
           --hidden-import=sip `
           --collect-all PyQt5 `
-          --add-data "resources\resources" `
+          --add-data "resources;resources" `
           --name ${{ env.APP_NAME }} `
-          main.py
-          
-        Write-Host "✅ Build terminé avec succès"
+        main.py
+  
+       Write-Host "✅ Build terminé avec succès"
 
     - name: ✅ Vérifier le build
       run: |
