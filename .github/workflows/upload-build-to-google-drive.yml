@@ -1,0 +1,321 @@
+# 📤 Workflow séparé pour l'upload vers Google Drive
+name: Upload to Google Drive
+
+on:
+  # Se déclenche quand une release est publiée
+  release:
+    types: [published]
+  
+  # Permet aussi le déclenchement manuel
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag de la release à uploader (ex: v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # ID du dossier Google Drive cible
+  GDRIVE_FOLDER_ID: "1EMQfuyMNHNc3170KXiSbyalx9HbQX5SN"
+
+jobs:
+  upload-to-gdrive:
+    name: 📤 Upload vers Google Drive
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout du code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 🏷️ Déterminer la version
+      id: version
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          VERSION="${{ github.event.inputs.release_tag }}"
+        else
+          VERSION="${{ github.event.release.tag_name }}"
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📦 Version à uploader: $VERSION"
+
+    - name: 📋 Récupérer les assets de la release
+      id: get_assets
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        echo "🔍 Recherche des assets pour la release $VERSION..."
+        
+        # Récupérer les informations de la release via l'API GitHub
+        RELEASE_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/releases/tags/$VERSION")
+        
+        # Extraire les URLs des assets ZIP
+        ZIP_ASSETS=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test(".*\\.zip$")) | {name: .name, url: .browser_download_url}')
+        
+        if [[ -z "$ZIP_ASSETS" || "$ZIP_ASSETS" == "null" ]]; then
+          echo "❌ Aucun fichier ZIP trouvé dans la release $VERSION"
+          echo "📋 Assets disponibles:"
+          echo "$RELEASE_INFO" | jq -r '.assets[].name'
+          exit 1
+        fi
+        
+        # Sauvegarder les infos des assets
+        echo "$ZIP_ASSETS" > assets.json
+        echo "✅ Assets ZIP trouvés:"
+        echo "$ZIP_ASSETS" | jq -r '.name'
+        
+        # Compter le nombre d'assets
+        ASSET_COUNT=$(echo "$ZIP_ASSETS" | jq -s 'length')
+        echo "asset_count=$ASSET_COUNT" >> $GITHUB_OUTPUT
+
+    - name: 📥 Télécharger les assets
+      run: |
+        echo "📥 Téléchargement des assets..."
+        
+        mkdir -p downloads
+        
+        # Lire chaque asset et le télécharger
+        while IFS= read -r asset; do
+          if [[ -n "$asset" && "$asset" != "null" ]]; then
+            ASSET_NAME=$(echo "$asset" | jq -r '.name')
+            ASSET_URL=$(echo "$asset" | jq -r '.url')
+            
+            echo "⬇️ Téléchargement: $ASSET_NAME"
+            
+            # Télécharger avec authentification GitHub
+            curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/octet-stream" \
+              -o "downloads/$ASSET_NAME" \
+              "$ASSET_URL"
+            
+            if [[ -f "downloads/$ASSET_NAME" ]]; then
+              SIZE=$(stat -c%s "downloads/$ASSET_NAME" 2>/dev/null || stat -f%z "downloads/$ASSET_NAME" 2>/dev/null || echo "0")
+              SIZE_MB=$((SIZE / 1024 / 1024))
+              echo "✅ Téléchargé: $ASSET_NAME (${SIZE_MB} MB)"
+            else
+              echo "❌ Échec téléchargement: $ASSET_NAME"
+            fi
+          fi
+        done < <(cat assets.json | jq -c '.')
+
+    - name: 🔑 Setup Service Account Google Drive
+      run: |
+        echo "🔑 Configuration du service account Google Drive..."
+        
+        # Vérifier que le secret existe
+        if [[ -z "${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT }}" ]]; then
+          echo "❌ ERREUR: Secret GOOGLE_DRIVE_SERVICE_ACCOUNT manquant!"
+          echo "📝 Pour ajouter le secret:"
+          echo "   1. Allez dans Settings > Secrets and variables > Actions"
+          echo "   2. Cliquez 'New repository secret'"
+          echo "   3. Nom: GOOGLE_DRIVE_SERVICE_ACCOUNT"
+          echo "   4. Valeur: Collez le contenu JSON de votre service account"
+          exit 1
+        fi
+        
+        # Créer le fichier service account
+        echo '${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT }}' > service-account.json
+        
+        # Vérifier que le JSON est valide
+        if python -c "import json; json.load(open('service-account.json'))" 2>/dev/null; then
+          echo "✅ Service Account JSON valide"
+        else
+          echo "❌ ERREUR: JSON service account invalide"
+          exit 1
+        fi
+        
+        # Afficher l'email du service account (pour debug)
+        SERVICE_EMAIL=$(python -c "import json; print(json.load(open('service-account.json'))['client_email'])")
+        echo "📧 Service Account Email: $SERVICE_EMAIL"
+        echo "📁 Dossier cible ID: ${{ env.GDRIVE_FOLDER_ID }}"
+
+    - name: 📦 Installer dépendances Google Drive
+      run: |
+        echo "📦 Installation des dépendances..."
+        pip install google-api-python-client google-auth
+
+    - name: 🚀 Upload vers Google Drive
+      run: |
+        echo "🚀 Démarrage de l'upload vers Google Drive..."
+        
+        # Créer le script d'upload Python optimisé
+        cat > gdrive_upload.py << 'SCRIPT_EOF'
+        import os
+        import json
+        import glob
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        from googleapiclient.errors import HttpError
+        
+        def main():
+            print("🔐 Authentification avec Google Drive...")
+            
+            try:
+                # Configuration
+                SERVICE_ACCOUNT_FILE = 'service-account.json'
+                SCOPES = ['https://www.googleapis.com/auth/drive']
+                TARGET_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
+                VERSION = os.environ.get('VERSION')
+                
+                if not TARGET_FOLDER_ID:
+                    print("❌ GDRIVE_FOLDER_ID non défini")
+                    return False
+                
+                # Authentification
+                credentials = Credentials.from_service_account_file(
+                    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+                )
+                service = build('drive', 'v3', credentials=credentials)
+                print("✅ Authentification réussie")
+                
+                # Vérifier l'accès au dossier cible
+                try:
+                    folder_info = service.files().get(
+                        fileId=TARGET_FOLDER_ID,
+                        fields='id,name,parents'
+                    ).execute()
+                    print(f"✅ Accès au dossier: {folder_info['name']} (ID: {TARGET_FOLDER_ID})")
+                except HttpError as e:
+                    print(f"❌ Impossible d'accéder au dossier {TARGET_FOLDER_ID}: {e}")
+                    print("🔍 Vérifiez que le dossier est partagé avec le service account")
+                    return False
+                
+                # Trouver tous les fichiers ZIP à uploader
+                zip_files = glob.glob('downloads/*.zip')
+                if not zip_files:
+                    print("❌ Aucun fichier ZIP trouvé dans downloads/")
+                    return False
+                
+                print(f"📁 {len(zip_files)} fichier(s) à uploader:")
+                for zip_file in zip_files:
+                    print(f"  - {os.path.basename(zip_file)}")
+                
+                uploaded_files = []
+                
+                # Uploader chaque fichier
+                for zip_file in zip_files:
+                    file_name = os.path.basename(zip_file)
+                    file_size = os.path.getsize(zip_file) / (1024 * 1024)  # MB
+                    
+                    print(f"\n⬆️ Upload: {file_name} ({file_size:.1f} MB)")
+                    
+                    # Vérifier si le fichier existe déjà et le supprimer
+                    existing_files = service.files().list(
+                        q=f"name='{file_name}' and '{TARGET_FOLDER_ID}' in parents and trashed=false",
+                        fields="files(id, name)"
+                    ).execute()
+                    
+                    for existing_file in existing_files.get('files', []):
+                        print(f"🗑️ Suppression de l'ancienne version: {existing_file['name']}")
+                        service.files().delete(fileId=existing_file['id']).execute()
+                    
+                    # Upload du nouveau fichier
+                    file_metadata = {
+                        'name': file_name,
+                        'parents': [TARGET_FOLDER_ID]
+                    }
+                    
+                    try:
+                        media = MediaFileUpload(zip_file, resumable=True)
+                        file_result = service.files().create(
+                            body=file_metadata,
+                            media_body=media,
+                            fields='id,name,webViewLink,size'
+                        ).execute()
+                        
+                        # Résultats
+                        file_id = file_result.get('id')
+                        web_link = file_result.get('webViewLink')
+                        uploaded_size = int(file_result.get('size', 0)) / (1024 * 1024)
+                        
+                        print(f"✅ Upload réussi!")
+                        print(f"   📄 Nom: {file_result.get('name')}")
+                        print(f"   🆔 ID: {file_id}")
+                        print(f"   📏 Taille: {uploaded_size:.1f} MB")
+                        print(f"   🔗 Lien: {web_link}")
+                        
+                        uploaded_files.append({
+                            'name': file_name,
+                            'id': file_id,
+                            'link': web_link,
+                            'size_mb': uploaded_size
+                        })
+                        
+                    except Exception as e:
+                        print(f"❌ Erreur upload {file_name}: {e}")
+                        continue
+                
+                # Sauvegarder les résultats
+                if uploaded_files:
+                    with open('upload_results.json', 'w') as f:
+                        json.dump({
+                            'version': VERSION,
+                            'folder_id': TARGET_FOLDER_ID,
+                            'uploaded_files': uploaded_files,
+                            'total_files': len(uploaded_files),
+                            'total_size_mb': sum(f['size_mb'] for f in uploaded_files)
+                        }, f, indent=2)
+                    
+                    print(f"\n🎉 Upload terminé!")
+                    print(f"📊 {len(uploaded_files)} fichier(s) uploadé(s)")
+                    print(f"📏 Taille totale: {sum(f['size_mb'] for f in uploaded_files):.1f} MB")
+                    return True
+                else:
+                    print("❌ Aucun fichier n'a pu être uploadé")
+                    return False
+                    
+            except Exception as e:
+                print(f"❌ Erreur générale: {e}")
+                return False
+        
+        if __name__ == "__main__":
+            success = main()
+            exit(0 if success else 1)
+        SCRIPT_EOF
+        
+        # Exécuter l'upload
+        VERSION="${{ steps.version.outputs.version }}" \
+        GDRIVE_FOLDER_ID="${{ env.GDRIVE_FOLDER_ID }}" \
+        python gdrive_upload.py
+
+    - name: 📋 Résumé de l'upload
+      if: always()
+      run: |
+        echo "📋 === RÉSUMÉ DE L'UPLOAD ==="
+        echo ""
+        
+        if [[ -f "upload_results.json" ]]; then
+          echo "✅ Upload réussi!"
+          echo ""
+          
+          VERSION=$(cat upload_results.json | jq -r '.version')
+          TOTAL_FILES=$(cat upload_results.json | jq -r '.total_files')
+          TOTAL_SIZE=$(cat upload_results.json | jq -r '.total_size_mb')
+          
+          echo "📦 Version: $VERSION"
+          echo "📁 Fichiers uploadés: $TOTAL_FILES"
+          echo "📏 Taille totale: ${TOTAL_SIZE} MB"
+          echo "📂 Dossier Google Drive: https://drive.google.com/drive/folders/${{ env.GDRIVE_FOLDER_ID }}"
+          echo ""
+          echo "🔗 Liens directs:"
+          
+          cat upload_results.json | jq -r '.uploaded_files[] | "   📄 \(.name): \(.link)"'
+          
+        else
+          echo "❌ Upload échoué ou aucun fichier uploadé"
+          echo ""
+          echo "🔍 Vérifiez:"
+          echo "   1. Que la release contient des fichiers ZIP"
+          echo "   2. Que le service account a accès au dossier"
+          echo "   3. Que l'ID du dossier est correct: ${{ env.GDRIVE_FOLDER_ID }}"
+        fi
