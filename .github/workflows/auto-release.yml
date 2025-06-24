@@ -116,6 +116,7 @@ jobs:
         Write-Host "🚀 Build privé en cours..."
         
         pyinstaller --onedir --windowed `
+          --icon=resources/icon.ico `
           --hidden-import=googleapiclient.discovery `
           --hidden-import=googleapiclient.http `
           --hidden-import=google.auth.transport.requests `
