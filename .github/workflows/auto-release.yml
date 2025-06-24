@@ -108,31 +108,69 @@ jobs:
     - name: 🧹 Nettoyer les anciens builds
       shell: pwsh
       run: |
-        Write-Host "🧹 Nettoyage..."
-        if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
-        if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
-        Get-ChildItem -Filter "*.spec" | Remove-Item -Force
-        Write-Host "✅ Nettoyage terminé"
+        Write-Host "🧹 Nettoyage des anciens builds..."
+        
+        try {
+          if (Test-Path "build") { 
+            Remove-Item -Recurse -Force "build" 
+            Write-Host "✅ Dossier 'build' supprimé"
+          }
+          
+          if (Test-Path "dist") { 
+            Remove-Item -Recurse -Force "dist" 
+            Write-Host "✅ Dossier 'dist' supprimé"
+          }
+          
+          $specFiles = Get-ChildItem -Filter "*.spec" -ErrorAction SilentlyContinue
+          if ($specFiles) {
+            $specFiles | Remove-Item -Force
+            Write-Host "✅ Fichiers .spec supprimés"
+          }
+          
+          Write-Host "✅ Nettoyage terminé avec succès"
+        } catch {
+          Write-Host "⚠️ Erreur lors du nettoyage: $($_.Exception.Message)"
+          Write-Host "🔄 Continuation du processus..."
+        }
 
     - name: 🔨 Build avec PyInstaller
       shell: pwsh
       run: |
-        Write-Host "🚀 Build privé en cours..."
+        $AppName = "${{ env.APP_NAME }}"
+        Write-Host "🚀 Build privé en cours pour $AppName..."
 
-        pyinstaller --onedir --windowed `
-          --icon=resources/icon.ico `
-          --hidden-import=googleapiclient.discovery `
-          --hidden-import=googleapiclient.http `
-          --hidden-import=google.auth.transport.requests `
-          --hidden-import=google.oauth2.credentials `
-          --hidden-import=charset_normalizer.md__mypyc `
-          --hidden-import=sip `
-          --collect-all PyQt5 `
-          --add-data "resources;resources" `
-          --name ${{ env.APP_NAME }} `
-          main.py
+        try {
+          $pyinstallerArgs = @(
+            "--onedir",
+            "--windowed",
+            "--icon=resources/icon.ico",
+            "--hidden-import=googleapiclient.discovery",
+            "--hidden-import=googleapiclient.http",
+            "--hidden-import=google.auth.transport.requests",
+            "--hidden-import=google.oauth2.credentials",
+            "--hidden-import=charset_normalizer.md__mypyc",
+            "--hidden-import=sip",
+            "--collect-all", "PyQt5",
+            "--add-data", "resources;resources",
+            "--name", $AppName,
+            "main.py"
+          )
 
-        Write-Host "✅ Build terminé avec succès"
+          Write-Host "📋 Commande PyInstaller:"
+          Write-Host "pyinstaller $($pyinstallerArgs -join ' ')"
+          
+          & pyinstaller @pyinstallerArgs
+          
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ Build terminé avec succès"
+          } else {
+            Write-Host "❌ Build échoué avec code: $LASTEXITCODE"
+            exit 1
+          }
+        } catch {
+          Write-Host "❌ Erreur lors du build: $($_.Exception.Message)"
+          exit 1
+        }
 
     - name: ✅ Vérifier le build
       shell: pwsh
@@ -167,40 +205,58 @@ jobs:
       shell: pwsh
       run: |
         $VERSION = "${{ steps.version.outputs.clean_version }}"
-        $ZIP_NAME = "${{ env.APP_NAME }}-v$VERSION-Windows-READY"
+        $AppName = "${{ env.APP_NAME }}"
+        $ZIP_NAME = "$AppName-v$VERSION-Windows-READY"
         $ZIP_FILE = "$ZIP_NAME.zip"
 
         Write-Host "📦 Création du ZIP prêt à utiliser..."
+        Write-Host "📦 Version: $VERSION"
+        Write-Host "📦 Nom APP: $AppName"
+        Write-Host "📦 Nom ZIP: $ZIP_FILE"
+
+        # Vérifier que le dossier de build existe
+        $buildPath = "dist\$AppName"
+        if (-not (Test-Path $buildPath)) {
+          Write-Host "❌ Erreur: Dossier de build non trouvé: $buildPath"
+          exit 1
+        }
 
         # Créer un README pour le ZIP
-        $readme = @"
-            # 🚀 ${{ env.APP_NAME }} v$VERSION - PRÊT À UTILISER
+        $readmeContent = @"
+# 🚀 $AppName v$VERSION - PRÊT À UTILISER
 
-            ## ✅ Installation Immédiate
+## ✅ Installation Immédiate
 
-            1. **Extraire** ce ZIP dans un dossier de votre choix
-            2. **Lancer** ${{ env.APP_NAME }}.exe
-            3. **Autoriser** l'accès Google Drive au premier lancement
-            4. **C'est tout !** L'application est prête à utiliser
+1. **Extraire** ce ZIP dans un dossier de votre choix
+2. **Lancer** $AppName.exe
+3. **Autoriser** l'accès Google Drive au premier lancement
+4. **C'est tout !** L'application est prête à utiliser
 
-            ## 🔑 Credentials Inclus
+## 🔑 Credentials Inclus
 
-            Cette version inclut vos credentials Google Drive API personnels.
-            Aucune configuration supplémentaire n'est nécessaire.
+Cette version inclut vos credentials Google Drive API personnels.
+Aucune configuration supplémentaire n'est nécessaire.
 
-            ## 🆘 Support
+## 🆘 Support
 
-            - Documentation: https://github.com/${{ github.repository }}
-            - Issues: https://github.com/${{ github.repository }}/issues
+- Documentation: https://github.com/${{ github.repository }}
+- Issues: https://github.com/${{ github.repository }}/issues
 
-            ---
-            Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
-        "@
+---
+Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
+"@
 
-        $readme | Out-File -FilePath "dist\${{ env.APP_NAME }}\README.txt" -Encoding UTF8
+        $readmeContent | Out-File -FilePath "$buildPath\README.txt" -Encoding UTF8
+        Write-Host "✅ README créé"
 
         # Créer le ZIP
-        Compress-Archive -Path "dist\${{ env.APP_NAME }}\*" -DestinationPath $ZIP_FILE -Force
+        try {
+          Compress-Archive -Path "$buildPath\*" -DestinationPath $ZIP_FILE -Force
+          Write-Host "✅ Compression terminée"
+        } catch {
+          Write-Host "❌ Erreur lors de la compression: $($_.Exception.Message)"
+          exit 1
+        }
 
         if (Test-Path $ZIP_FILE) {
           $zipSize = (Get-Item $ZIP_FILE).Length / 1MB
@@ -211,8 +267,9 @@ jobs:
           exit 1
         }
 
-        echo "ZIP_FILE=$ZIP_FILE" >> $env:GITHUB_ENV
-        echo "ZIP_NAME=$ZIP_NAME" >> $env:GITHUB_ENV
+        # Exporter les variables pour les étapes suivantes
+        "ZIP_FILE=$ZIP_FILE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "ZIP_NAME=$ZIP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
     - name: 📝 Générer changelog
       id: changelog
@@ -338,16 +395,21 @@ jobs:
     - name: 🎉 Confirmation Finale
       shell: pwsh
       run: |
+        $AppName = "${{ env.APP_NAME }}"
+        $Version = "${{ steps.version.outputs.version }}"
+        $ZipFile = "${{ env.ZIP_FILE }}"
+        $ReleaseUrl = "${{ steps.create_release.outputs.html_url }}"
+        
         Write-Host ""
         Write-Host "🎉🎉🎉 BUILD PRIVÉ CRÉÉ AVEC SUCCÈS! 🎉🎉🎉"
         Write-Host ""
-        Write-Host "📦 Version: ${{ steps.version.outputs.version }}"
-        Write-Host "📁 Fichier: ${{ env.ZIP_FILE }}"
-        Write-Host "🔗 Release: ${{ steps.create_release.outputs.html_url }}"
+        Write-Host "📦 Version: $Version"
+        Write-Host "📁 Fichier: $ZipFile"
+        Write-Host "🔗 Release: $ReleaseUrl"
         Write-Host ""
         Write-Host "✅ PRÊT À UTILISER:"
         Write-Host "   1. Téléchargez le ZIP depuis GitHub"
-        Write-Host "   2. Extrayez et lancez ${{ env.APP_NAME }}.exe"
+        Write-Host "   2. Extrayez et lancez $AppName.exe"
         Write-Host "   3. Autorisez Google Drive"
         Write-Host "   4. Enjoy! 🚀"
         Write-Host ""
