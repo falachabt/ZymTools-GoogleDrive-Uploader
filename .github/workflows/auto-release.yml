@@ -190,7 +190,7 @@ jobs:
             
             ---
             Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
-            "@
+        "@
         
         $readme | Out-File -FilePath "dist\${{ env.APP_NAME }}\README.txt" -Encoding UTF8
         
