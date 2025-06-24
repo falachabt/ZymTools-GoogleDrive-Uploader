@@ -553,11 +553,11 @@ jobs:
         echo "📦 Installation des dépendances..."
         pip install google-api-python-client google-auth
 
-    - name: 🚀 Upload vers Google Drive
+    - name: 🚀 Upload vers Google Drive (avec navigation hiérarchique)
       run: |
-        echo "🚀 Démarrage de l'upload vers Google Drive..."
+        echo "🚀 Démarrage de l'upload vers Google Drive avec gestion hiérarchique..."
 
-        # Créer le script d'upload Python optimisé
+        # Script Python complet avec gestion de la hiérarchie
         cat > gdrive_upload.py << 'SCRIPT_EOF'
         import os
         import json
@@ -567,6 +567,87 @@ jobs:
         from googleapiclient.http import MediaFileUpload
         from googleapiclient.errors import HttpError
 
+        def find_folder_by_name(service, folder_name, parent_folder_id=None):
+            """Trouve un dossier par nom dans un dossier parent (ou racine si None)"""
+            try:
+                query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                if parent_folder_id:
+                    query += f" and '{parent_folder_id}' in parents"
+                
+                results = service.files().list(q=query, fields="files(id, name, parents)").execute()
+                folders = results.get('files', [])
+                
+                if folders:
+                    print(f"✅ Dossier trouvé: {folders[0]['name']} (ID: {folders[0]['id']})")
+                    return folders[0]['id']
+                else:
+                    print(f"❌ Dossier '{folder_name}' non trouvé" + (f" dans {parent_folder_id}" if parent_folder_id else " à la racine"))
+                    return None
+                    
+            except HttpError as e:
+                print(f"❌ Erreur lors de la recherche du dossier '{folder_name}': {e}")
+                return None
+
+        def create_folder_in_parent(service, folder_name, parent_folder_id):
+            """Crée un dossier dans un dossier parent"""
+            try:
+                folder_metadata = {
+                    'name': folder_name,
+                    'mimeType': 'application/vnd.google-apps.folder',
+                    'parents': [parent_folder_id] if parent_folder_id else []
+                }
+                
+                folder = service.files().create(body=folder_metadata, fields='id,name').execute()
+                print(f"✅ Dossier créé: {folder['name']} (ID: {folder['id']})")
+                return folder['id']
+                
+            except HttpError as e:
+                print(f"❌ Erreur lors de la création du dossier '{folder_name}': {e}")
+                return None
+
+        def get_target_folder(service, target_folder_id=None):
+            """Stratégie intelligente pour trouver ou créer le dossier cible"""
+            
+            # Stratégie 1: Essayer d'accéder directement au dossier spécifié
+            if target_folder_id:
+                try:
+                    folder_info = service.files().get(
+                        fileId=target_folder_id,
+                        fields='id,name,parents'
+                    ).execute()
+                    print(f"✅ Accès direct au dossier: {folder_info['name']} (ID: {target_folder_id})")
+                    return target_folder_id
+                except HttpError as e:
+                    print(f"⚠️ Pas d'accès direct au dossier {target_folder_id}: {e}")
+            
+            # Stratégie 2: Chercher le dossier ZymoSync puis le sous-dossier beta
+            print("🔍 Recherche du dossier ZymoSync...")
+            zymosync_folder_id = find_folder_by_name(service, "ZymoSync")
+            
+            if zymosync_folder_id:
+                print("🔍 Recherche du dossier beta dans ZymoSync...")
+                beta_folder_id = find_folder_by_name(service, "beta", zymosync_folder_id)
+                
+                if beta_folder_id:
+                    return beta_folder_id
+                else:
+                    print("📁 Création du dossier beta dans ZymoSync...")
+                    return create_folder_in_parent(service, "beta", zymosync_folder_id)
+            
+            # Stratégie 3: Chercher tous les dossiers "beta" accessibles
+            print("🔍 Recherche de tous les dossiers 'beta' accessibles...")
+            all_beta_folders = find_folder_by_name(service, "beta")
+            if all_beta_folders:
+                return all_beta_folders
+            
+            # Stratégie 4: Créer un nouveau dossier ZymoSync à la racine
+            print("📁 Création d'un nouveau dossier ZymoSync...")
+            new_zymosync_id = create_folder_in_parent(service, "ZymoSync-Releases", None)
+            if new_zymosync_id:
+                return create_folder_in_parent(service, "beta", new_zymosync_id)
+            
+            return None
+
         def main():
             print("🔐 Authentification avec Google Drive...")
 
@@ -575,12 +656,8 @@ jobs:
                 SERVICE_ACCOUNT_FILE = 'service-account.json'
                 SCOPES = ['https://www.googleapis.com/auth/drive']
                 TARGET_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
-                VERSION = os.environ.get('VERSION')
-
-                if not TARGET_FOLDER_ID:
-                    print("❌ GDRIVE_FOLDER_ID non défini")
-                    return False
-
+                VERSION = os.environ.get('VERSION', 'unknown')
+                
                 # Authentification
                 credentials = Credentials.from_service_account_file(
                     SERVICE_ACCOUNT_FILE, scopes=SCOPES
@@ -588,17 +665,22 @@ jobs:
                 service = build('drive', 'v3', credentials=credentials)
                 print("✅ Authentification réussie")
 
-                # Vérifier l'accès au dossier cible
-                try:
-                    folder_info = service.files().get(
-                        fileId=TARGET_FOLDER_ID,
-                        fields='id,name,parents'
-                    ).execute()
-                    print(f"✅ Accès au dossier: {folder_info['name']} (ID: {TARGET_FOLDER_ID})")
-                except HttpError as e:
-                    print(f"❌ Impossible d'accéder au dossier {TARGET_FOLDER_ID}: {e}")
-                    print("🔍 Vérifiez que le dossier est partagé avec le service account")
+                # Afficher l'email du service account pour debug
+                with open(SERVICE_ACCOUNT_FILE, 'r') as f:
+                    service_data = json.load(f)
+                    service_email = service_data.get('client_email', 'Unknown')
+                print(f"📧 Service Account: {service_email}")
+
+                # Trouver le dossier cible avec stratégie intelligente
+                print(f"\n🎯 Recherche du dossier cible (ID souhaité: {TARGET_FOLDER_ID})...")
+                folder_id = get_target_folder(service, TARGET_FOLDER_ID)
+                
+                if not folder_id:
+                    print("❌ Impossible de trouver ou créer un dossier cible")
                     return False
+                    
+                print(f"📁 Dossier cible final: ID = {folder_id}")
+                print(f"🔗 Lien: https://drive.google.com/drive/folders/{folder_id}")
 
                 # Trouver tous les fichiers ZIP à uploader
                 zip_files = glob.glob('downloads/*.zip')
@@ -606,9 +688,10 @@ jobs:
                     print("❌ Aucun fichier ZIP trouvé dans downloads/")
                     return False
 
-                print(f"📁 {len(zip_files)} fichier(s) à uploader:")
+                print(f"\n📁 {len(zip_files)} fichier(s) à uploader:")
                 for zip_file in zip_files:
-                    print(f"  - {os.path.basename(zip_file)}")
+                    file_size = os.path.getsize(zip_file) / (1024 * 1024)
+                    print(f"  - {os.path.basename(zip_file)} ({file_size:.1f} MB)")
 
                 uploaded_files = []
 
@@ -621,7 +704,7 @@ jobs:
 
                     # Vérifier si le fichier existe déjà et le supprimer
                     existing_files = service.files().list(
-                        q=f"name='{file_name}' and '{TARGET_FOLDER_ID}' in parents and trashed=false",
+                        q=f"name='{file_name}' and '{folder_id}' in parents and trashed=false",
                         fields="files(id, name)"
                     ).execute()
 
@@ -632,7 +715,7 @@ jobs:
                     # Upload du nouveau fichier
                     file_metadata = {
                         'name': file_name,
-                        'parents': [TARGET_FOLDER_ID]
+                        'parents': [folder_id]
                     }
 
                     try:
@@ -670,7 +753,8 @@ jobs:
                     with open('upload_results.json', 'w') as f:
                         json.dump({
                             'version': VERSION,
-                            'folder_id': TARGET_FOLDER_ID,
+                            'folder_id': folder_id,
+                            'folder_link': f"https://drive.google.com/drive/folders/{folder_id}",
                             'uploaded_files': uploaded_files,
                             'total_files': len(uploaded_files),
                             'total_size_mb': sum(f['size_mb'] for f in uploaded_files)
@@ -679,6 +763,7 @@ jobs:
                     print(f"\n🎉 Upload terminé!")
                     print(f"📊 {len(uploaded_files)} fichier(s) uploadé(s)")
                     print(f"📏 Taille totale: {sum(f['size_mb'] for f in uploaded_files):.1f} MB")
+                    print(f"📁 Dossier final: https://drive.google.com/drive/folders/{folder_id}")
                     return True
                 else:
                     print("❌ Aucun fichier n'a pu être uploadé")
@@ -693,7 +778,7 @@ jobs:
             exit(0 if success else 1)
         SCRIPT_EOF
 
-        # Exécuter l'upload
+        # Exécuter l'upload avec le script amélioré
         VERSION="${{ steps.version.outputs.version }}" \
         GDRIVE_FOLDER_ID="${{ env.GDRIVE_FOLDER_ID }}" \
         python gdrive_upload.py
