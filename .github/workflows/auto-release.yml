@@ -102,6 +102,7 @@ jobs:
         echo "✅ Credentials privés configurés avec succès"
 
     - name: 🧹 Nettoyer les anciens builds
+      shell: pwsh
       run: |
         Write-Host "🧹 Nettoyage..."
         if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
@@ -110,6 +111,7 @@ jobs:
         Write-Host "✅ Nettoyage terminé"
 
     - name: 🔨 Build avec PyInstaller
+      shell: pwsh
       run: |
         Write-Host "🚀 Build privé en cours..."
         
@@ -125,12 +127,13 @@ jobs:
           --name ${{ env.APP_NAME }} `
           main.py
   
-       Write-Host "✅ Build terminé avec succès"
+        Write-Host "✅ Build terminé avec succès"
 
     - name: ✅ Vérifier le build
+      shell: pwsh
       run: |
         $exePath = "dist\${{ env.APP_NAME }}\${{ env.APP_NAME }}.exe"
-        $credPath = "dist\${{ env.APP_NAME }}\credentials.json"
+        $credPath = "dist\${{ env.APP_NAME }}\resources\credentials.json"
         
         if (Test-Path $exePath) {
           Write-Host "✅ Exécutable créé: $exePath"
@@ -147,6 +150,8 @@ jobs:
           Write-Host "✅ Credentials inclus dans le build"
         } else {
           Write-Host "❌ WARNING: credentials.json non trouvé dans le build"
+          Write-Host "🔍 Recherche dans resources:"
+          Get-ChildItem -Path "dist\${{ env.APP_NAME }}" -Recurse -Filter "credentials.json"
         }
         
         # Afficher la structure du build
@@ -154,6 +159,7 @@ jobs:
         Get-ChildItem -Path "dist\${{ env.APP_NAME }}" | Select-Object Name, Length | Format-Table
 
     - name: 📦 Créer ZIP prêt à utiliser
+      shell: pwsh
       run: |
         $VERSION = "${{ steps.version.outputs.clean_version }}"
         $ZIP_NAME = "${{ env.APP_NAME }}-v$VERSION-Windows-READY"
@@ -163,28 +169,28 @@ jobs:
         
         # Créer un README pour le ZIP
         $readme = @"
-              # 🚀 ${{ env.APP_NAME }} v$VERSION - PRÊT À UTILISER
+            # 🚀 ${{ env.APP_NAME }} v$VERSION - PRÊT À UTILISER
+            
+            ## ✅ Installation Immédiate
               
-              ## ✅ Installation Immédiate
-                
-                1. **Extraire** ce ZIP dans un dossier de votre choix
-              2. **Lancer** ${{ env.APP_NAME }}.exe
-              3. **Autoriser** l'accès Google Drive au premier lancement
-              4. **C'est tout !** L'application est prête à utiliser
-              
-              ## 🔑 Credentials Inclus
-              
-              Cette version inclut vos credentials Google Drive API personnels.
-              Aucune configuration supplémentaire n'est nécessaire.
-              
-              ## 🆘 Support
-              
-              - Documentation: https://github.com/${{ github.repository }}
-              - Issues: https://github.com/${{ github.repository }}/issues
-              
-              ---
-              Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
-        "@
+            1. **Extraire** ce ZIP dans un dossier de votre choix
+            2. **Lancer** ${{ env.APP_NAME }}.exe
+            3. **Autoriser** l'accès Google Drive au premier lancement
+            4. **C'est tout !** L'application est prête à utiliser
+            
+            ## 🔑 Credentials Inclus
+            
+            Cette version inclut vos credentials Google Drive API personnels.
+            Aucune configuration supplémentaire n'est nécessaire.
+            
+            ## 🆘 Support
+            
+            - Documentation: https://github.com/${{ github.repository }}
+            - Issues: https://github.com/${{ github.repository }}/issues
+            
+            ---
+            Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
+            "@
         
         $readme | Out-File -FilePath "dist\${{ env.APP_NAME }}\README.txt" -Encoding UTF8
         
@@ -325,6 +331,7 @@ jobs:
           }
 
     - name: 🎉 Confirmation Finale
+      shell: pwsh
       run: |
         Write-Host ""
         Write-Host "🎉🎉🎉 BUILD PRIVÉ CRÉÉ AVEC SUCCÈS! 🎉🎉🎉"
