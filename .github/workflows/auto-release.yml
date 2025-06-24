@@ -22,6 +22,7 @@ env:
   PYTHON_VERSION: "3.9"
   # ID du dossier Google Drive cible
   GDRIVE_FOLDER_ID: "1EMQfuyMNHNc3170KXiSbyalx9HbQX5SN"
+  PERSONAL_EMAIL: "benny.tenezeu@zymoptiq.com"  #
 
 jobs:
   private-build:
@@ -545,6 +546,7 @@ jobs:
         SERVICE_EMAIL=$(python -c "import json; print(json.load(open('service-account.json'))['client_email'])")
         echo "📧 Service Account Email: $SERVICE_EMAIL"
         echo "📁 Dossier cible ID: ${{ env.GDRIVE_FOLDER_ID }}"
+        echo "📧 Partage avec: ${{ env.PERSONAL_EMAIL }}"
       env:
         GOOGLE_DRIVE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT }}
 
@@ -553,11 +555,11 @@ jobs:
         echo "📦 Installation des dépendances..."
         pip install google-api-python-client google-auth
 
-    - name: 🚀 Upload vers Google Drive (avec navigation hiérarchique)
+    - name: 🚀 Upload vers Google Drive (avec partage automatique)
       run: |
-        echo "🚀 Démarrage de l'upload vers Google Drive avec gestion hiérarchique..."
+        echo "🚀 Démarrage de l'upload vers Google Drive avec partage automatique..."
 
-        # Script Python complet avec gestion de la hiérarchie
+        # Script Python complet avec partage automatique
         cat > gdrive_upload.py << 'SCRIPT_EOF'
         import os
         import json
@@ -604,6 +606,57 @@ jobs:
             except HttpError as e:
                 print(f"❌ Erreur lors de la création du dossier '{folder_name}': {e}")
                 return None
+
+        def share_file_with_email(service, file_id, email, file_name):
+            """Partage un fichier avec une adresse email spécifique"""
+            if not email or email == 'votre.email@gmail.com':
+                print(f"⚠️ Email par défaut détecté pour {file_name} - partage ignoré")
+                print("🔧 Changez PERSONAL_EMAIL dans le workflow pour activer le partage automatique")
+                return False
+                
+            try:
+                print(f"📧 Partage de {file_name} avec {email}...")
+                
+                permission = {
+                    'type': 'user',
+                    'role': 'reader',
+                    'emailAddress': email
+                }
+                
+                service.permissions().create(
+                    fileId=file_id,
+                    body=permission,
+                    sendNotificationEmail=True
+                ).execute()
+                
+                print(f"✅ Fichier {file_name} partagé avec {email}")
+                return True
+                
+            except HttpError as e:
+                print(f"⚠️ Impossible de partager {file_name} avec {email}: {e}")
+                return False
+
+        def make_file_public(service, file_id, file_name):
+            """Rend un fichier accessible publiquement (lecture seule)"""
+            try:
+                print(f"🌐 Rendu public: {file_name}...")
+                
+                permission = {
+                    'type': 'anyone',
+                    'role': 'reader'
+                }
+                
+                service.permissions().create(
+                    fileId=file_id,
+                    body=permission
+                ).execute()
+                
+                print(f"✅ Fichier {file_name} rendu public")
+                return True
+                
+            except HttpError as e:
+                print(f"⚠️ Impossible de rendre public {file_name}: {e}")
+                return False
 
         def get_target_folder(service, target_folder_id=None):
             """Stratégie intelligente pour trouver ou créer le dossier cible"""
@@ -657,6 +710,7 @@ jobs:
                 SCOPES = ['https://www.googleapis.com/auth/drive']
                 TARGET_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
                 VERSION = os.environ.get('VERSION', 'unknown')
+                PERSONAL_EMAIL = os.environ.get('PERSONAL_EMAIL', '')
                 
                 # Authentification
                 credentials = Credentials.from_service_account_file(
@@ -670,6 +724,7 @@ jobs:
                     service_data = json.load(f)
                     service_email = service_data.get('client_email', 'Unknown')
                 print(f"📧 Service Account: {service_email}")
+                print(f"📧 Partage automatique avec: {PERSONAL_EMAIL}")
 
                 # Trouver le dossier cible avec stratégie intelligente
                 print(f"\n🎯 Recherche du dossier cible (ID souhaité: {TARGET_FOLDER_ID})...")
@@ -737,11 +792,26 @@ jobs:
                         print(f"   📏 Taille: {uploaded_size:.1f} MB")
                         print(f"   🔗 Lien: {web_link}")
 
+                        # 🎯 PARTAGE AUTOMATIQUE
+                        print(f"\n📧 === PARTAGE AUTOMATIQUE ===")
+                        
+                        # Partager avec l'email personnel si fourni
+                        if PERSONAL_EMAIL and PERSONAL_EMAIL != 'votre.email@gmail.com':
+                            share_success = share_file_with_email(service, file_id, PERSONAL_EMAIL, file_name)
+                            if share_success:
+                                print(f"✅ Notification envoyée à {PERSONAL_EMAIL}")
+                        else:
+                            print("⚠️ Email personnel non configuré - partage spécifique ignoré")
+                        
+                        # Option: Rendre le fichier public (décommentez si souhaité)
+                        # make_file_public(service, file_id, file_name)
+                        
                         uploaded_files.append({
                             'name': file_name,
                             'id': file_id,
                             'link': web_link,
-                            'size_mb': uploaded_size
+                            'size_mb': uploaded_size,
+                            'shared_with': PERSONAL_EMAIL if PERSONAL_EMAIL != 'votre.email@gmail.com' else None
                         })
 
                     except Exception as e:
@@ -757,13 +827,19 @@ jobs:
                             'folder_link': f"https://drive.google.com/drive/folders/{folder_id}",
                             'uploaded_files': uploaded_files,
                             'total_files': len(uploaded_files),
-                            'total_size_mb': sum(f['size_mb'] for f in uploaded_files)
+                            'total_size_mb': sum(f['size_mb'] for f in uploaded_files),
+                            'shared_with': PERSONAL_EMAIL if PERSONAL_EMAIL != 'votre.email@gmail.com' else None
                         }, f, indent=2)
 
                     print(f"\n🎉 Upload terminé!")
                     print(f"📊 {len(uploaded_files)} fichier(s) uploadé(s)")
                     print(f"📏 Taille totale: {sum(f['size_mb'] for f in uploaded_files):.1f} MB")
                     print(f"📁 Dossier final: https://drive.google.com/drive/folders/{folder_id}")
+                    
+                    if PERSONAL_EMAIL and PERSONAL_EMAIL != 'votre.email@gmail.com':
+                        print(f"📧 Notifications envoyées à: {PERSONAL_EMAIL}")
+                        print(f"✅ Vous devriez recevoir un email de partage Google Drive")
+                    
                     return True
                 else:
                     print("❌ Aucun fichier n'a pu être uploadé")
@@ -781,6 +857,7 @@ jobs:
         # Exécuter l'upload avec le script amélioré
         VERSION="${{ steps.version.outputs.version }}" \
         GDRIVE_FOLDER_ID="${{ env.GDRIVE_FOLDER_ID }}" \
+        PERSONAL_EMAIL="${{ env.PERSONAL_EMAIL }}" \
         python gdrive_upload.py
 
     - name: 📋 Résumé de l'upload
@@ -796,15 +873,26 @@ jobs:
           VERSION=$(cat upload_results.json | jq -r '.version')
           TOTAL_FILES=$(cat upload_results.json | jq -r '.total_files')
           TOTAL_SIZE=$(cat upload_results.json | jq -r '.total_size_mb')
+          SHARED_WITH=$(cat upload_results.json | jq -r '.shared_with // "Non configuré"')
 
           echo "📦 Version: $VERSION"
           echo "📁 Fichiers uploadés: $TOTAL_FILES"
           echo "📏 Taille totale: ${TOTAL_SIZE} MB"
+          echo "📧 Partagé avec: $SHARED_WITH"
           echo "📂 Dossier Google Drive: https://drive.google.com/drive/folders/${{ env.GDRIVE_FOLDER_ID }}"
           echo ""
           echo "🔗 Liens directs:"
 
           cat upload_results.json | jq -r '.uploaded_files[] | "   📄 \(.name): \(.link)"'
+          
+          echo ""
+          if [[ "$SHARED_WITH" != "Non configuré" && "$SHARED_WITH" != "null" ]]; then
+            echo "📧 ✅ Notification de partage envoyée à: $SHARED_WITH"
+            echo "📬 Vérifiez votre boîte mail pour la notification Google Drive"
+          else
+            echo "⚠️ Partage automatique non configuré"
+            echo "🔧 Changez PERSONAL_EMAIL dans le workflow pour activer le partage"
+          fi
 
         else
           echo "❌ Upload échoué ou aucun fichier uploadé"
