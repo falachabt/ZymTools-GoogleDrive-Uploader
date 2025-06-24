@@ -123,7 +123,7 @@ jobs:
           --collect-all PyQt5 `
           --add-data "resources;resources" `
           --name ${{ env.APP_NAME }} `
-        main.py
+          main.py
   
        Write-Host "✅ Build terminé avec succès"
 
