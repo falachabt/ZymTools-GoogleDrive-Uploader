@@ -25,11 +25,11 @@ jobs:
   private-build:
     name: 🔨 Build Privé avec Credentials
     runs-on: windows-latest
-    
+
     steps:
     - name: 📥 Checkout du code
       uses: actions/checkout@v4
-      
+
     - name: 🏷️ Extraire la version
       id: version
       shell: bash
@@ -46,18 +46,18 @@ jobs:
         echo "clean_version=$CLEAN_VERSION" >> $GITHUB_OUTPUT
         
         echo "📦 Version: $VERSION"
-        
+
     - name: 🐍 Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: ${{ env.PYTHON_VERSION }}
-        
+
     - name: 📦 Installer les dépendances
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
-        
+
     # ===== CREDENTIALS PRIVÉS UNIQUEMENT =====
     - name: 🔑 Setup Credentials Privés
       shell: bash
@@ -100,7 +100,7 @@ jobs:
         fi
         
         echo "✅ Credentials privés configurés avec succès"
-        
+
     - name: 🧹 Nettoyer les anciens builds
       run: |
         Write-Host "🧹 Nettoyage..."
@@ -108,7 +108,7 @@ jobs:
         if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
         Get-ChildItem -Filter "*.spec" | Remove-Item -Force
         Write-Host "✅ Nettoyage terminé"
-        
+
     - name: 🔨 Build avec PyInstaller
       run: |
         Write-Host "🚀 Build privé en cours..."
@@ -126,7 +126,7 @@ jobs:
           main.py
           
         Write-Host "✅ Build terminé avec succès"
-        
+
     - name: ✅ Vérifier le build
       run: |
         $exePath = "dist\${{ env.APP_NAME }}\${{ env.APP_NAME }}.exe"
@@ -152,7 +152,7 @@ jobs:
         # Afficher la structure du build
         Write-Host "📁 Structure du build final:"
         Get-ChildItem -Path "dist\${{ env.APP_NAME }}" | Select-Object Name, Length | Format-Table
-        
+
     - name: 📦 Créer ZIP prêt à utiliser
       run: |
         $VERSION = "${{ steps.version.outputs.clean_version }}"
@@ -202,65 +202,57 @@ jobs:
         
         echo "ZIP_FILE=$ZIP_FILE" >> $env:GITHUB_ENV
         echo "ZIP_NAME=$ZIP_NAME" >> $env:GITHUB_ENV
-        
+
     - name: 📝 Générer changelog
       id: changelog
       shell: bash
       run: |
         VERSION="${{ steps.version.outputs.version }}"
         
-        BODY="## 🚀 ${{ env.APP_NAME }} $VERSION - Build Privé\n\n"
-        BODY+="📅 **Date**: $(date '+%Y-%m-%d %H:%M:%S')\n"
-        BODY+="🔐 **Type**: Build privé avec credentials intégrés\n\n"
+        # Créer le changelog dans un fichier temporaire pour éviter les problèmes d'échappement
+        cat > changelog.md << 'EOF'
+        ## 🚀 ZymoSync $VERSION - Build Privé
         
-        BODY+="### ✅ Prêt à Utiliser Immédiatement\n\n"
-        BODY+="Cette version inclut vos credentials Google Drive API personnels.\n"
-        BODY+="Aucune configuration supplémentaire n'est requise!\n\n"
+        📅 **Date**: $(date '+%Y-%m-%d %H:%M:%S')
+        🔐 **Type**: Build privé avec credentials intégrés
         
-        BODY+="### 🚀 Installation Ultra-Simple\n\n"
-        BODY+="1. **Téléchargez** le ZIP ci-dessous\n"
-        BODY+="2. **Extrayez** dans un dossier de votre choix\n"
-        BODY+="3. **Double-cliquez** sur \`${{ env.APP_NAME }}.exe\`\n"
-        BODY+="4. **Autorisez** Google Drive au premier lancement\n"
-        BODY+="5. **Enjoy!** 🎉\n\n"
+        ### ✅ Prêt à Utiliser Immédiatement
         
-        # Ajouter les changements depuis la dernière version
-        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
-        if [[ -n "$PREVIOUS_TAG" ]]; then
-          BODY+="### 🔄 Nouveautés depuis $PREVIOUS_TAG\n\n"
-          COMMITS=$(git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD)
-          if [[ -n "$COMMITS" ]]; then
-            BODY+="$COMMITS\n\n"
-          else
-            BODY+="- Améliorations internes et corrections\n\n"
-          fi
-        else
-          BODY+="### 🎉 Première Release Automatique!\n\n"
-          BODY+="- Interface moderne avec thème sombre\n"
-          BODY+="- Navigation bifurcée (local ↔ Google Drive)\n"
-          BODY+="- Drag & Drop intuitif\n"
-          BODY+="- Gestionnaire de transferts avancé\n"
-          BODY+="- Support des Shared Drives d'entreprise\n\n"
-        fi
+        Cette version inclut vos credentials Google Drive API personnels.
+        Aucune configuration supplémentaire n'est requise!
         
-        BODY+="### 📦 Détails Techniques\n\n"
-        BODY+="- **Plateforme**: Windows x64\n"
-        BODY+="- **Python**: ${{ env.PYTHON_VERSION }}\n"
-        BODY+="- **PyQt5**: Inclus\n"
-        BODY+="- **Credentials**: Intégrés (prêt à utiliser)\n"
-        BODY+="- **Fichier**: \`${{ env.ZIP_FILE }}\`\n\n"
+        ### 🚀 Installation Ultra-Simple
         
-        BODY+="### 🔒 Sécurité\n\n"
-        BODY+="Ce build privé contient vos credentials personnels Google Drive.\n"
-        BODY+="Ne partagez pas ce fichier avec d'autres personnes.\n\n"
+        1. **Téléchargez** le ZIP ci-dessous
+        2. **Extrayez** dans un dossier de votre choix
+        3. **Double-cliquez** sur ZymoSync.exe
+        4. **Autorisez** Google Drive au premier lancement
+        5. **Enjoy!** 🎉
         
-        BODY+="---\n\n"
-        BODY+="💡 **Besoin d'aide?** Consultez le README.txt inclus dans le ZIP!"
+        ### 📦 Détails Techniques
         
-        # Échapper pour JSON (méthode simple)
-        BODY_ESCAPED=$(echo -e "$BODY" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr '\n' ' ')
-        echo "body=$BODY_ESCAPED" >> $GITHUB_OUTPUT
+        - **Plateforme**: Windows x64
+        - **Python**: 3.9
+        - **PyQt5**: Inclus
+        - **Credentials**: Intégrés (prêt à utiliser)
         
+        ### 🔒 Sécurité
+        
+        Ce build privé contient vos credentials personnels Google Drive.
+        Ne partagez pas ce fichier avec d'autres personnes.
+        
+        ---
+        
+        💡 **Besoin d'aide?** Consultez le README.txt inclus dans le ZIP!
+        EOF
+        
+        # Remplacer la variable VERSION dans le fichier
+        sed -i "s/\$VERSION/$VERSION/g" changelog.md
+        
+        # Lire le contenu et l'encoder en base64 pour éviter les problèmes d'échappement
+        CHANGELOG_B64=$(base64 -w 0 changelog.md)
+        echo "changelog_b64=$CHANGELOG_B64" >> $GITHUB_OUTPUT
+
     - name: 🎉 Créer Release Privée
       id: create_release
       uses: actions/github-script@v7
@@ -268,8 +260,11 @@ jobs:
         script: |
           const { owner, repo } = context.repo;
           const tag = "${{ steps.version.outputs.version }}";
-          const name = "🔐 ${{ env.APP_NAME }} ${{ steps.version.outputs.version }} (Privé)";
-          const body = `${{ steps.changelog.outputs.body }}`;
+          const name = `🔐 ZymoSync ${tag} (Privé)`;
+          
+          // Décoder le changelog depuis base64
+          const changelogB64 = "${{ steps.changelog.outputs.changelog_b64 }}";
+          const body = Buffer.from(changelogB64, 'base64').toString('utf8');
           
           console.log('🎯 Création de la release privée...');
           console.log('Tag:', tag);
@@ -296,7 +291,7 @@ jobs:
             console.error('❌ Erreur création release:', error);
             throw error;
           }
-          
+
     - name: 📎 Upload ZIP vers Release
       uses: actions/github-script@v7
       with:
@@ -328,7 +323,7 @@ jobs:
             console.error('❌ Erreur upload ZIP:', error);
             throw error;
           }
-          
+
     - name: 🎉 Confirmation Finale
       run: |
         Write-Host ""
