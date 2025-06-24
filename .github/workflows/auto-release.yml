@@ -20,6 +20,8 @@ permissions:
 env:
   APP_NAME: "ZymoSync"
   PYTHON_VERSION: "3.9"
+  # ID du dossier Google Drive cible
+  GDRIVE_FOLDER_ID: "1EMQfuyMNHNc3170KXiSbyalx9HbQX5SN"
 
 jobs:
   private-build:
@@ -39,12 +41,12 @@ jobs:
         else
           VERSION=${GITHUB_REF#refs/tags/}
         fi
-        
+
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        
+
         CLEAN_VERSION=${VERSION#v}
         echo "clean_version=$CLEAN_VERSION" >> $GITHUB_OUTPUT
-        
+
         echo "📦 Version: $VERSION"
 
     - name: 🐍 Setup Python
@@ -63,10 +65,10 @@ jobs:
       shell: bash
       run: |
         echo "🔐 Configuration des credentials privés..."
-        
+
         # Créer le dossier resources
         mkdir -p resources
-        
+
         # Vérifier que le secret existe
         if [[ -z "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" ]]; then
           echo "❌ ERREUR: Secret GOOGLE_CREDENTIALS_JSON manquant!"
@@ -77,12 +79,12 @@ jobs:
           echo "   4. Valeur: Collez le contenu de votre credentials.json"
           exit 1
         fi
-        
+
         echo "✅ Secret trouvé, création du fichier credentials..."
-        
+
         # Écrire le JSON depuis les secrets (méthode sécurisée)
         echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > resources/credentials.json
-        
+
         # Vérifier que le JSON est valide
         if python -m json.tool resources/credentials.json > /dev/null 2>&1; then
           echo "✅ Credentials JSON valide"
@@ -91,14 +93,14 @@ jobs:
           echo "🔍 Vérifiez que le secret contient un JSON valide"
           exit 1
         fi
-        
+
         # Vérifier la présence des clés importantes
         if grep -q "client_id" resources/credentials.json && grep -q "client_secret" resources/credentials.json; then
           echo "✅ Credentials semblent complets (client_id et client_secret trouvés)"
         else
           echo "⚠️ WARNING: client_id ou client_secret non trouvés dans les credentials"
         fi
-        
+
         echo "✅ Credentials privés configurés avec succès"
 
     - name: 🧹 Nettoyer les anciens builds
@@ -114,7 +116,7 @@ jobs:
       shell: pwsh
       run: |
         Write-Host "🚀 Build privé en cours..."
-        
+
         pyinstaller --onedir --windowed `
           --icon=resources/icon.ico `
           --hidden-import=googleapiclient.discovery `
@@ -127,7 +129,7 @@ jobs:
           --add-data "resources;resources" `
           --name ${{ env.APP_NAME }} `
           main.py
-  
+
         Write-Host "✅ Build terminé avec succès"
 
     - name: ✅ Vérifier le build
@@ -135,7 +137,7 @@ jobs:
       run: |
         $exePath = "dist\${{ env.APP_NAME }}\${{ env.APP_NAME }}.exe"
         $credPath = "dist\${{ env.APP_NAME }}\resources\credentials.json"
-        
+
         if (Test-Path $exePath) {
           Write-Host "✅ Exécutable créé: $exePath"
           $size = (Get-Item $exePath).Length / 1MB
@@ -146,7 +148,7 @@ jobs:
           Get-ChildItem -Path "dist" -Recurse
           exit 1
         }
-        
+
         if (Test-Path $credPath) {
           Write-Host "✅ Credentials inclus dans le build"
         } else {
@@ -154,7 +156,7 @@ jobs:
           Write-Host "🔍 Recherche dans resources:"
           Get-ChildItem -Path "dist\${{ env.APP_NAME }}" -Recurse -Filter "credentials.json"
         }
-        
+
         # Afficher la structure du build
         Write-Host "📁 Structure du build final:"
         Get-ChildItem -Path "dist\${{ env.APP_NAME }}" | Select-Object Name, Length | Format-Table
@@ -165,39 +167,39 @@ jobs:
         $VERSION = "${{ steps.version.outputs.clean_version }}"
         $ZIP_NAME = "${{ env.APP_NAME }}-v$VERSION-Windows-READY"
         $ZIP_FILE = "$ZIP_NAME.zip"
-        
+
         Write-Host "📦 Création du ZIP prêt à utiliser..."
-        
+
         # Créer un README pour le ZIP
         $readme = @"
             # 🚀 ${{ env.APP_NAME }} v$VERSION - PRÊT À UTILISER
-            
+
             ## ✅ Installation Immédiate
-              
+
             1. **Extraire** ce ZIP dans un dossier de votre choix
             2. **Lancer** ${{ env.APP_NAME }}.exe
             3. **Autoriser** l'accès Google Drive au premier lancement
             4. **C'est tout !** L'application est prête à utiliser
-            
+
             ## 🔑 Credentials Inclus
-            
+
             Cette version inclut vos credentials Google Drive API personnels.
             Aucune configuration supplémentaire n'est nécessaire.
-            
+
             ## 🆘 Support
-            
+
             - Documentation: https://github.com/${{ github.repository }}
             - Issues: https://github.com/${{ github.repository }}/issues
-            
+
             ---
             Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
         "@
-        
+
         $readme | Out-File -FilePath "dist\${{ env.APP_NAME }}\README.txt" -Encoding UTF8
-        
+
         # Créer le ZIP
         Compress-Archive -Path "dist\${{ env.APP_NAME }}\*" -DestinationPath $ZIP_FILE -Force
-        
+
         if (Test-Path $ZIP_FILE) {
           $zipSize = (Get-Item $ZIP_FILE).Length / 1MB
           Write-Host "✅ ZIP créé: $ZIP_FILE"
@@ -206,7 +208,7 @@ jobs:
           Write-Host "❌ Erreur: ZIP non créé"
           exit 1
         }
-        
+
         echo "ZIP_FILE=$ZIP_FILE" >> $env:GITHUB_ENV
         echo "ZIP_NAME=$ZIP_NAME" >> $env:GITHUB_ENV
 
@@ -215,47 +217,47 @@ jobs:
       shell: bash
       run: |
         VERSION="${{ steps.version.outputs.version }}"
-        
+
         # Créer le changelog dans un fichier temporaire pour éviter les problèmes d'échappement
         cat > changelog.md << 'EOF'
         ## 🚀 ZymoSync $VERSION - Build Privé
-        
+
         📅 **Date**: $(date '+%Y-%m-%d %H:%M:%S')
         🔐 **Type**: Build privé avec credentials intégrés
-        
+
         ### ✅ Prêt à Utiliser Immédiatement
-        
+
         Cette version inclut vos credentials Google Drive API personnels.
         Aucune configuration supplémentaire n'est requise!
-        
+
         ### 🚀 Installation Ultra-Simple
-        
+
         1. **Téléchargez** le ZIP ci-dessous
         2. **Extrayez** dans un dossier de votre choix
         3. **Double-cliquez** sur ZymoSync.exe
         4. **Autorisez** Google Drive au premier lancement
         5. **Enjoy!** 🎉
-        
+
         ### 📦 Détails Techniques
-        
+
         - **Plateforme**: Windows x64
         - **Python**: 3.9
         - **PyQt5**: Inclus
         - **Credentials**: Intégrés (prêt à utiliser)
-        
+
         ### 🔒 Sécurité
-        
+
         Ce build privé contient vos credentials personnels Google Drive.
         Ne partagez pas ce fichier avec d'autres personnes.
-        
+
         ---
-        
+
         💡 **Besoin d'aide?** Consultez le README.txt inclus dans le ZIP!
         EOF
-        
+
         # Remplacer la variable VERSION dans le fichier
         sed -i "s/\$VERSION/$VERSION/g" changelog.md
-        
+
         # Lire le contenu et l'encoder en base64 pour éviter les problèmes d'échappement
         CHANGELOG_B64=$(base64 -w 0 changelog.md)
         echo "changelog_b64=$CHANGELOG_B64" >> $GITHUB_OUTPUT
@@ -268,15 +270,15 @@ jobs:
           const { owner, repo } = context.repo;
           const tag = "${{ steps.version.outputs.version }}";
           const name = `🔐 ZymoSync ${tag} (Privé)`;
-          
+
           // Décoder le changelog depuis base64
           const changelogB64 = "${{ steps.changelog.outputs.changelog_b64 }}";
           const body = Buffer.from(changelogB64, 'base64').toString('utf8');
-          
+
           console.log('🎯 Création de la release privée...');
           console.log('Tag:', tag);
           console.log('Nom:', name);
-          
+
           try {
             const release = await github.rest.repos.createRelease({
               owner,
@@ -287,13 +289,13 @@ jobs:
               draft: false,
               prerelease: false
             });
-            
+
             console.log('✅ Release créée:', release.data.html_url);
-            
+
             core.setOutput('release_id', release.data.id);
             core.setOutput('upload_url', release.data.upload_url);
             core.setOutput('html_url', release.data.html_url);
-            
+
           } catch (error) {
             console.error('❌ Erreur création release:', error);
             throw error;
@@ -305,15 +307,15 @@ jobs:
         script: |
           const fs = require('fs');
           const path = require('path');
-          
+
           const zipFile = '${{ env.ZIP_FILE }}';
           const uploadUrl = '${{ steps.create_release.outputs.upload_url }}';
-          
+
           console.log('📎 Upload du ZIP privé:', zipFile);
-          
+
           try {
             const data = fs.readFileSync(zipFile);
-            
+
             const response = await github.rest.repos.uploadReleaseAsset({
               url: uploadUrl,
               headers: {
@@ -323,9 +325,9 @@ jobs:
               name: path.basename(zipFile),
               data: data
             });
-            
+
             console.log('✅ ZIP uploadé:', response.data.browser_download_url);
-            
+
           } catch (error) {
             console.error('❌ Erreur upload ZIP:', error);
             throw error;
@@ -349,3 +351,313 @@ jobs:
         Write-Host ""
         Write-Host "🔐 Build privé avec VOS credentials inclus"
         Write-Host "⚠️  Ne partagez pas ce ZIP (contient vos clés privées)"
+
+  upload-to-gdrive:
+    name: 📤 Upload vers Google Drive
+    runs-on: ubuntu-latest
+    needs: private-build
+
+    steps:
+    - name: 📥 Checkout du code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 🏷️ Déterminer la version
+      id: version
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          VERSION="${{ github.event.inputs.version }}"
+        else
+          VERSION="${{ github.ref_name }}"
+        fi
+
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📦 Version à uploader: $VERSION"
+
+    - name: 📥 Télécharger les assets de la release
+      uses: actions/github-script@v7
+      id: download_assets
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const fs = require('fs');
+          const path = require('path');
+
+          const tag = "${{ steps.version.outputs.version }}";
+          console.log(`🔍 Recherche des assets pour la release ${tag}...`);
+
+          try {
+            // Créer le dossier downloads
+            fs.mkdirSync('downloads', { recursive: true });
+
+            // Récupérer les informations de la release
+            const release = await github.rest.repos.getReleaseByTag({
+              owner,
+              repo,
+              tag
+            });
+
+            console.log(`✅ Release trouvée: ${release.data.name}`);
+
+            // Filtrer les assets ZIP
+            const zipAssets = release.data.assets.filter(asset => 
+              asset.name.endsWith('.zip')
+            );
+
+            if (zipAssets.length === 0) {
+              console.log('❌ Aucun fichier ZIP trouvé dans la release');
+              return core.setFailed('Aucun fichier ZIP trouvé');
+            }
+
+            console.log(`📦 ${zipAssets.length} fichier(s) ZIP trouvé(s)`);
+
+            // Télécharger chaque asset
+            for (const asset of zipAssets) {
+              console.log(`⬇️ Téléchargement: ${asset.name}`);
+
+              const response = await github.request({
+                method: 'GET',
+                url: asset.browser_download_url,
+                headers: {
+                  accept: 'application/octet-stream'
+                },
+                responseType: 'arraybuffer'
+              });
+
+              const filePath = path.join('downloads', asset.name);
+              fs.writeFileSync(filePath, Buffer.from(response.data));
+
+              const stats = fs.statSync(filePath);
+              const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(1);
+
+              console.log(`✅ Téléchargé: ${asset.name} (${fileSizeMB} MB)`);
+            }
+
+            // Sauvegarder les noms des fichiers
+            const assetNames = zipAssets.map(asset => asset.name);
+            core.setOutput('asset_names', JSON.stringify(assetNames));
+            core.setOutput('asset_count', assetNames.length);
+
+            console.log('📋 Assets téléchargés avec succès');
+
+          } catch (error) {
+            console.error(`❌ Erreur: ${error.message}`);
+            core.setFailed(error.message);
+          }
+
+    - name: 🔑 Setup Service Account Google Drive
+      run: |
+        echo "🔑 Configuration du service account Google Drive..."
+
+        # Vérifier que le secret existe
+        if [[ -z "${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT }}" ]]; then
+          echo "❌ ERREUR: Secret GOOGLE_DRIVE_SERVICE_ACCOUNT manquant!"
+          echo "📝 Pour ajouter le secret:"
+          echo "   1. Allez dans Settings > Secrets and variables > Actions"
+          echo "   2. Cliquez 'New repository secret'"
+          echo "   3. Nom: GOOGLE_DRIVE_SERVICE_ACCOUNT"
+          echo "   4. Valeur: Collez le contenu JSON de votre service account"
+          exit 1
+        fi
+
+        # Créer le fichier service account
+        echo '${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT }}' > service-account.json
+
+        # Vérifier que le JSON est valide
+        if python -c "import json; json.load(open('service-account.json'))" 2>/dev/null; then
+          echo "✅ Service Account JSON valide"
+        else
+          echo "❌ ERREUR: JSON service account invalide"
+          exit 1
+        fi
+
+        # Afficher l'email du service account (pour debug)
+        SERVICE_EMAIL=$(python -c "import json; print(json.load(open('service-account.json'))['client_email'])")
+        echo "📧 Service Account Email: $SERVICE_EMAIL"
+        echo "📁 Dossier cible ID: ${{ env.GDRIVE_FOLDER_ID }}"
+
+    - name: 📦 Installer dépendances Google Drive
+      run: |
+        echo "📦 Installation des dépendances..."
+        pip install google-api-python-client google-auth
+
+    - name: 🚀 Upload vers Google Drive
+      run: |
+        echo "🚀 Démarrage de l'upload vers Google Drive..."
+
+        # Créer le script d'upload Python optimisé
+        cat > gdrive_upload.py << 'SCRIPT_EOF'
+        import os
+        import json
+        import glob
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        from googleapiclient.errors import HttpError
+
+        def main():
+            print("🔐 Authentification avec Google Drive...")
+
+            try:
+                # Configuration
+                SERVICE_ACCOUNT_FILE = 'service-account.json'
+                SCOPES = ['https://www.googleapis.com/auth/drive']
+                TARGET_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
+                VERSION = os.environ.get('VERSION')
+
+                if not TARGET_FOLDER_ID:
+                    print("❌ GDRIVE_FOLDER_ID non défini")
+                    return False
+
+                # Authentification
+                credentials = Credentials.from_service_account_file(
+                    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+                )
+                service = build('drive', 'v3', credentials=credentials)
+                print("✅ Authentification réussie")
+
+                # Vérifier l'accès au dossier cible
+                try:
+                    folder_info = service.files().get(
+                        fileId=TARGET_FOLDER_ID,
+                        fields='id,name,parents'
+                    ).execute()
+                    print(f"✅ Accès au dossier: {folder_info['name']} (ID: {TARGET_FOLDER_ID})")
+                except HttpError as e:
+                    print(f"❌ Impossible d'accéder au dossier {TARGET_FOLDER_ID}: {e}")
+                    print("🔍 Vérifiez que le dossier est partagé avec le service account")
+                    return False
+
+                # Trouver tous les fichiers ZIP à uploader
+                zip_files = glob.glob('downloads/*.zip')
+                if not zip_files:
+                    print("❌ Aucun fichier ZIP trouvé dans downloads/")
+                    return False
+
+                print(f"📁 {len(zip_files)} fichier(s) à uploader:")
+                for zip_file in zip_files:
+                    print(f"  - {os.path.basename(zip_file)}")
+
+                uploaded_files = []
+
+                # Uploader chaque fichier
+                for zip_file in zip_files:
+                    file_name = os.path.basename(zip_file)
+                    file_size = os.path.getsize(zip_file) / (1024 * 1024)  # MB
+
+                    print(f"\n⬆️ Upload: {file_name} ({file_size:.1f} MB)")
+
+                    # Vérifier si le fichier existe déjà et le supprimer
+                    existing_files = service.files().list(
+                        q=f"name='{file_name}' and '{TARGET_FOLDER_ID}' in parents and trashed=false",
+                        fields="files(id, name)"
+                    ).execute()
+
+                    for existing_file in existing_files.get('files', []):
+                        print(f"🗑️ Suppression de l'ancienne version: {existing_file['name']}")
+                        service.files().delete(fileId=existing_file['id']).execute()
+
+                    # Upload du nouveau fichier
+                    file_metadata = {
+                        'name': file_name,
+                        'parents': [TARGET_FOLDER_ID]
+                    }
+
+                    try:
+                        media = MediaFileUpload(zip_file, resumable=True)
+                        file_result = service.files().create(
+                            body=file_metadata,
+                            media_body=media,
+                            fields='id,name,webViewLink,size'
+                        ).execute()
+
+                        # Résultats
+                        file_id = file_result.get('id')
+                        web_link = file_result.get('webViewLink')
+                        uploaded_size = int(file_result.get('size', 0)) / (1024 * 1024)
+
+                        print(f"✅ Upload réussi!")
+                        print(f"   📄 Nom: {file_result.get('name')}")
+                        print(f"   🆔 ID: {file_id}")
+                        print(f"   📏 Taille: {uploaded_size:.1f} MB")
+                        print(f"   🔗 Lien: {web_link}")
+
+                        uploaded_files.append({
+                            'name': file_name,
+                            'id': file_id,
+                            'link': web_link,
+                            'size_mb': uploaded_size
+                        })
+
+                    except Exception as e:
+                        print(f"❌ Erreur upload {file_name}: {e}")
+                        continue
+
+                # Sauvegarder les résultats
+                if uploaded_files:
+                    with open('upload_results.json', 'w') as f:
+                        json.dump({
+                            'version': VERSION,
+                            'folder_id': TARGET_FOLDER_ID,
+                            'uploaded_files': uploaded_files,
+                            'total_files': len(uploaded_files),
+                            'total_size_mb': sum(f['size_mb'] for f in uploaded_files)
+                        }, f, indent=2)
+
+                    print(f"\n🎉 Upload terminé!")
+                    print(f"📊 {len(uploaded_files)} fichier(s) uploadé(s)")
+                    print(f"📏 Taille totale: {sum(f['size_mb'] for f in uploaded_files):.1f} MB")
+                    return True
+                else:
+                    print("❌ Aucun fichier n'a pu être uploadé")
+                    return False
+
+            except Exception as e:
+                print(f"❌ Erreur générale: {e}")
+                return False
+
+        if __name__ == "__main__":
+            success = main()
+            exit(0 if success else 1)
+        SCRIPT_EOF
+
+        # Exécuter l'upload
+        VERSION="${{ steps.version.outputs.version }}" \
+        GDRIVE_FOLDER_ID="${{ env.GDRIVE_FOLDER_ID }}" \
+        python gdrive_upload.py
+
+    - name: 📋 Résumé de l'upload
+      if: always()
+      run: |
+        echo "📋 === RÉSUMÉ DE L'UPLOAD ==="
+        echo ""
+
+        if [[ -f "upload_results.json" ]]; then
+          echo "✅ Upload réussi!"
+          echo ""
+
+          VERSION=$(cat upload_results.json | jq -r '.version')
+          TOTAL_FILES=$(cat upload_results.json | jq -r '.total_files')
+          TOTAL_SIZE=$(cat upload_results.json | jq -r '.total_size_mb')
+
+          echo "📦 Version: $VERSION"
+          echo "📁 Fichiers uploadés: $TOTAL_FILES"
+          echo "📏 Taille totale: ${TOTAL_SIZE} MB"
+          echo "📂 Dossier Google Drive: https://drive.google.com/drive/folders/${{ env.GDRIVE_FOLDER_ID }}"
+          echo ""
+          echo "🔗 Liens directs:"
+
+          cat upload_results.json | jq -r '.uploaded_files[] | "   📄 \(.name): \(.link)"'
+
+        else
+          echo "❌ Upload échoué ou aucun fichier uploadé"
+          echo ""
+          echo "🔍 Vérifiez:"
+          echo "   1. Que la release contient des fichiers ZIP"
+          echo "   2. Que le service account a accès au dossier"
+          echo "   3. Que l'ID du dossier est correct: ${{ env.GDRIVE_FOLDER_ID }}"
+        fi
