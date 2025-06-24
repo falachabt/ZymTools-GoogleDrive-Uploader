@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag de la release à uploader (ex: v1.0.0)'
+        description: 'Tag  de la release à uploader (ex: v1.0.0)'
         required: true
         type: string
 
