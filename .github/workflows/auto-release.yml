@@ -69,8 +69,8 @@ jobs:
         # Créer le dossier resources
         mkdir -p resources
 
-        # Vérifier que le secret existe
-        if [[ -z "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" ]]; then
+        # Vérifier que le secret existe (méthode corrigée)
+        if [ -z "$GOOGLE_CREDENTIALS_JSON" ]; then
           echo "❌ ERREUR: Secret GOOGLE_CREDENTIALS_JSON manquant!"
           echo "📝 Pour corriger:"
           echo "   1. Allez dans Settings > Secrets and variables > Actions"
@@ -83,7 +83,7 @@ jobs:
         echo "✅ Secret trouvé, création du fichier credentials..."
 
         # Écrire le JSON depuis les secrets (méthode sécurisée)
-        echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > resources/credentials.json
+        echo "$GOOGLE_CREDENTIALS_JSON" > resources/credentials.json
 
         # Vérifier que le JSON est valide
         if python -m json.tool resources/credentials.json > /dev/null 2>&1; then
@@ -102,6 +102,8 @@ jobs:
         fi
 
         echo "✅ Credentials privés configurés avec succès"
+      env:
+        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
 
     - name: 🧹 Nettoyer les anciens builds
       shell: pwsh
@@ -155,7 +157,7 @@ jobs:
           Write-Host "❌ WARNING: credentials.json non trouvé dans le build"
           Write-Host "🔍 Recherche dans resources:"
           Get-ChildItem -Path "dist\${{ env.APP_NAME }}" -Recurse -Filter "credentials.json"
-        }
+        fi
 
         # Afficher la structure du build
         Write-Host "📁 Structure du build final:"
@@ -356,6 +358,8 @@ jobs:
     name: 📤 Upload vers Google Drive
     runs-on: ubuntu-latest
     needs: private-build
+    # Ne s'exécute que si le build précédent a réussi
+    if: needs.private-build.result == 'success'
 
     steps:
     - name: 📥 Checkout du code
@@ -453,8 +457,8 @@ jobs:
       run: |
         echo "🔑 Configuration du service account Google Drive..."
 
-        # Vérifier que le secret existe
-        if [[ -z "${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT }}" ]]; then
+        # Vérifier que le secret existe (méthode corrigée)
+        if [ -z "$GOOGLE_DRIVE_SERVICE_ACCOUNT" ]; then
           echo "❌ ERREUR: Secret GOOGLE_DRIVE_SERVICE_ACCOUNT manquant!"
           echo "📝 Pour ajouter le secret:"
           echo "   1. Allez dans Settings > Secrets and variables > Actions"
@@ -465,7 +469,7 @@ jobs:
         fi
 
         # Créer le fichier service account
-        echo '${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT }}' > service-account.json
+        echo "$GOOGLE_DRIVE_SERVICE_ACCOUNT" > service-account.json
 
         # Vérifier que le JSON est valide
         if python -c "import json; json.load(open('service-account.json'))" 2>/dev/null; then
@@ -479,6 +483,8 @@ jobs:
         SERVICE_EMAIL=$(python -c "import json; print(json.load(open('service-account.json'))['client_email'])")
         echo "📧 Service Account Email: $SERVICE_EMAIL"
         echo "📁 Dossier cible ID: ${{ env.GDRIVE_FOLDER_ID }}"
+      env:
+        GOOGLE_DRIVE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT }}
 
     - name: 📦 Installer dépendances Google Drive
       run: |
