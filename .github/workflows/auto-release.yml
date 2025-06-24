@@ -14,10 +14,9 @@ on:
       build_type:
         description: 'Type de build'
         required: true
-        default: 'public'
+        default: 'private'
         type: choice
         options:
-          - public    # Build sans credentials (distributable)
           - private   # Build avec credentials (usage personnel)
 
 # 🔑 PERMISSIONS CRUCIALES - C'était ça le problème !
