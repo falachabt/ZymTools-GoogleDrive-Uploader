@@ -223,28 +223,28 @@ jobs:
 
         # Créer un README pour le ZIP
         $readmeContent = @"
-# 🚀 $AppName v$VERSION - PRÊT À UTILISER
-
-## ✅ Installation Immédiate
-
-1. **Extraire** ce ZIP dans un dossier de votre choix
-2. **Lancer** $AppName.exe
-3. **Autoriser** l'accès Google Drive au premier lancement
-4. **C'est tout !** L'application est prête à utiliser
-
-## 🔑 Credentials Inclus
-
-Cette version inclut vos credentials Google Drive API personnels.
-Aucune configuration supplémentaire n'est nécessaire.
-
-## 🆘 Support
-
-- Documentation: https://github.com/${{ github.repository }}
-- Issues: https://github.com/${{ github.repository }}/issues
-
----
-Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
-"@
+        # 🚀 $AppName v$VERSION - PRÊT À UTILISER
+        
+        ## ✅ Installation Immédiate
+        
+        1. **Extraire** ce ZIP dans un dossier de votre choix
+        2. **Lancer** $AppName.exe
+        3. **Autoriser** l'accès Google Drive au premier lancement
+        4. **C'est tout !** L'application est prête à utiliser
+        
+        ## 🔑 Credentials Inclus
+        
+        Cette version inclut vos credentials Google Drive API personnels.
+        Aucune configuration supplémentaire n'est nécessaire.
+        
+        ## 🆘 Support
+        
+        - Documentation: https://github.com/${{ github.repository }}
+        - Issues: https://github.com/${{ github.repository }}/issues
+        
+        ---
+        Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
+        "@
 
         $readmeContent | Out-File -FilePath "$buildPath\README.txt" -Encoding UTF8
         Write-Host "✅ README créé"
