@@ -195,7 +195,7 @@ jobs:
           Write-Host "❌ WARNING: credentials.json non trouvé dans le build"
           Write-Host "🔍 Recherche dans resources:"
           Get-ChildItem -Path "dist\${{ env.APP_NAME }}" -Recurse -Filter "credentials.json"
-        fi
+        }
 
         # Afficher la structure du build
         Write-Host "📁 Structure du build final:"
