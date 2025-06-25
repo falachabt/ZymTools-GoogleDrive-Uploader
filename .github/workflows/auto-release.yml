@@ -26,7 +26,7 @@ env:
 
 jobs:
   private-build:
-    name: 🔨 Build Privé avec Credentials
+    name: 🔨 Build
     runs-on: windows-latest
 
     steps:
@@ -418,7 +418,7 @@ jobs:
         Write-Host "⚠️  Ne partagez pas ce ZIP (contient vos clés privées)"
 
   upload-to-gdrive:
-    name: 📤 Upload vers Google Drive
+    name: 📤 Deploy
     runs-on: ubuntu-latest
     needs: private-build
     # Ne s'exécute que si le build précédent a réussi
@@ -609,8 +609,7 @@ jobs:
 
         def share_file_with_email(service, file_id, email, file_name):
             """Partage un fichier avec une adresse email spécifique"""
-            if not email or email == 'votre.email@gmail.com':
-                print(f"⚠️ Email par défaut détecté pour {file_name} - partage ignoré")
+            if not email :
                 print("🔧 Changez PERSONAL_EMAIL dans le workflow pour activer le partage automatique")
                 return False
                 
@@ -796,14 +795,13 @@ jobs:
                         print(f"\n📧 === PARTAGE AUTOMATIQUE ===")
                         
                         # Partager avec l'email personnel si fourni
-                        if PERSONAL_EMAIL and PERSONAL_EMAIL != 'votre.email@gmail.com':
+                        if PERSONAL_EMAIL :
                             share_success = share_file_with_email(service, file_id, PERSONAL_EMAIL, file_name)
                             if share_success:
                                 print(f"✅ Notification envoyée à {PERSONAL_EMAIL}")
                         else:
                             print("⚠️ Email personnel non configuré - partage spécifique ignoré")
-                        
-                        # Option: Rendre le fichier public (décommentez si souhaité)
+        
                         # make_file_public(service, file_id, file_name)
                         
                         uploaded_files.append({

@@ -214,7 +214,7 @@ class SafeFolderUploadThread(QThread):
     def __init__(self, drive_client: GoogleDriveClient, folder_path: str,
                  parent_id: str = 'root', is_shared_drive: bool = False,
                  transfer_manager: Optional[TransferManager] = None,
-                 max_parallel_uploads_provider: callable = lambda: 3):  # Fournisseur pour max_parallel_uploads
+                 max_parallel_uploads_provider: callable = lambda: 10):  # Fournisseur pour max_parallel_uploads
         """
         Initialise le thread d'upload de dossier sécurisé
 
@@ -344,7 +344,7 @@ class SafeFolderUploadThread(QThread):
         results = []
 
         current_max_parallel = self.get_max_parallel_uploads()
-        current_max_parallel = max(1, min(current_max_parallel, 10)) # Clamping for safety
+        current_max_parallel = max(1, min(current_max_parallel, 100)) # Clamping for safety
 
         def upload_single_file_safe(file_info):
             """Upload sécurisé d'un seul fichier"""
@@ -526,7 +526,7 @@ class SafeFolderUploadThread(QThread):
             # if the provider changes the value mid-upload for different batches.
             # For now, we'll base it on the initial value fetched in run() for the message.
             # A more accurate message would require fetching it again or passing it around.
-            initial_max_parallel = max(1, min(self.get_max_parallel_uploads(), 10))
+            initial_max_parallel = max(1, min(self.get_max_parallel_uploads(), 100))
             self.status_signal.emit(f"⚡ Upload: {self.total_files} fichiers (mode: {'séquentiel' if initial_max_parallel == 1 else 'parallèle limité'})...")
 
             # Traiter chaque batch avec délais
