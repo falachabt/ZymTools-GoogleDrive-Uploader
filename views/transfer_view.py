@@ -408,8 +408,11 @@ class AllFilesListWidget(QWidget):
             return f"{hours}h {minutes}m"
     
     def update_files_list(self) -> None:
-        """Met à jour la liste des fichiers"""
+        """Met à jour la liste des fichiers (optimisé pour de gros volumes)"""
         try:
+            # Optimisation pour de gros volumes: limiter le nombre d'éléments affichés
+            MAX_DISPLAYED_FILES = 1000  # Limite pour éviter la surcharge UI
+            
             # Collecter tous les fichiers de tous les transferts
             all_files = []
             stats = {"total": 0, "pending": 0, "in_progress": 0, "completed": 0, "error": 0}
@@ -425,14 +428,7 @@ class AllFilesListWidget(QWidget):
                 if transfer.is_folder_transfer and transfer.child_files:
                     # Fichiers individuels dans les dossiers
                     for file_path, file_item in transfer.child_files.items():
-                        if self.should_show_status(file_item.status):
-                            all_files.append({
-                                'transfer_id': transfer_id,
-                                'file_item': file_item,
-                                'parent_folder': transfer.source_path
-                            })
-                        
-                        # Statistiques
+                        # Statistiques (toujours compter)
                         stats["total"] += 1
                         if file_item.status == TransferStatus.PENDING:
                             stats["pending"] += 1
@@ -442,9 +438,52 @@ class AllFilesListWidget(QWidget):
                             stats["completed"] += 1
                         elif file_item.status == TransferStatus.ERROR:
                             stats["error"] += 1
+                        
+                        # Affichage limité pour les performances (priorité aux fichiers actifs)
+                        if self.should_show_status(file_item.status) and len(all_files) < MAX_DISPLAYED_FILES:
+                            # Priorité: 1. En cours, 2. Erreurs, 3. En attente, 4. Terminés
+                            priority = 0
+                            if file_item.status == TransferStatus.IN_PROGRESS:
+                                priority = 1
+                            elif file_item.status == TransferStatus.ERROR:
+                                priority = 2
+                            elif file_item.status == TransferStatus.PENDING:
+                                priority = 3
+                            else:  # COMPLETED
+                                priority = 4
+                                
+                            all_files.append({
+                                'transfer_id': transfer_id,
+                                'file_item': file_item,
+                                'parent_folder': transfer.source_path,
+                                'priority': priority
+                            })
                 else:
                     # Fichiers simples
-                    if self.should_show_status(transfer.status):
+                    # Statistiques (toujours compter)
+                    stats["total"] += 1
+                    if transfer.status == TransferStatus.PENDING:
+                        stats["pending"] += 1
+                    elif transfer.status == TransferStatus.IN_PROGRESS:
+                        stats["in_progress"] += 1
+                    elif transfer.status == TransferStatus.COMPLETED:
+                        stats["completed"] += 1
+                    elif transfer.status == TransferStatus.ERROR:
+                        stats["error"] += 1
+                    
+                    # Affichage limité pour les performances (priorité aux fichiers actifs)
+                    if self.should_show_status(transfer.status) and len(all_files) < MAX_DISPLAYED_FILES:
+                        # Priorité: 1. En cours, 2. Erreurs, 3. En attente, 4. Terminés
+                        priority = 0
+                        if transfer.status == TransferStatus.IN_PROGRESS:
+                            priority = 1
+                        elif transfer.status == TransferStatus.ERROR:
+                            priority = 2
+                        elif transfer.status == TransferStatus.PENDING:
+                            priority = 3
+                        else:  # COMPLETED
+                            priority = 4
+                            
                         # Créer un FileTransferItem virtuel pour les fichiers simples
                         file_item = FileTransferItem(
                             transfer.source_path,
@@ -459,28 +498,27 @@ class AllFilesListWidget(QWidget):
                         all_files.append({
                             'transfer_id': transfer_id,
                             'file_item': file_item,
-                            'parent_folder': os.path.dirname(transfer.source_path)
+                            'parent_folder': os.path.dirname(transfer.source_path),
+                            'priority': priority
                         })
-                    
-                    # Statistiques
-                    stats["total"] += 1
-                    if transfer.status == TransferStatus.PENDING:
-                        stats["pending"] += 1
-                    elif transfer.status == TransferStatus.IN_PROGRESS:
-                        stats["in_progress"] += 1
-                    elif transfer.status == TransferStatus.COMPLETED:
-                        stats["completed"] += 1
-                    elif transfer.status == TransferStatus.ERROR:
-                        stats["error"] += 1
             
-            # Mettre à jour les statistiques
-            self.stats_label.setText(
+            # Trier par priorité pour afficher les fichiers les plus importants en premier
+            all_files.sort(key=lambda x: x['priority'])
+            
+            # Mettre à jour les statistiques (avec indicateur de limitation si nécessaire)
+            stats_text = (
                 f"📊 Total: {stats['total']} | "
                 f"⏳ En attente: {stats['pending']} | "
                 f"🔄 En cours: {stats['in_progress']} | "
                 f"✅ Terminés: {stats['completed']} | "
                 f"❌ Erreurs: {stats['error']}"
             )
+            
+            # Ajouter un indicateur si on limite l'affichage
+            if len(all_files) >= MAX_DISPLAYED_FILES:
+                stats_text += f" | 📄 Affichés: {len(all_files)}/{stats['total']} (limité pour performances)"
+            
+            self.stats_label.setText(stats_text)
             
             # Mettre à jour la table (optimisé pour éviter les flashs)
             current_row_count = self.files_table.rowCount()
