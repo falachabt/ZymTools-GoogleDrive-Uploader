@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
 import random
-from utils.google_drive_utils import  already_exists_in_folder
+from utils.google_drive_utils import already_exists_in_folder
 
 from core.google_drive_client import GoogleDriveClient
 from models.transfer_models import TransferManager, TransferType, TransferStatus
