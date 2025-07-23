@@ -32,7 +32,7 @@ echo 🚀 Compilation de l'application avec PyInstaller...
   --hidden-import=charset_normalizer.md__mypyc ^
   --hidden-import=sip ^
   --collect-all PyQt5 ^
-  --add-data "credentials.json;." ^
+  --add-data "resources;resources" ^
   --add-data "%QT_PLUGIN_PATH%;PyQt5/Qt/plugins" ^
   --add-binary "%ANACONDA_DLLS%\pyexpat.pyd;." ^
   --add-binary "%ANACONDA_LIBS%\libexpat.dll;." ^
