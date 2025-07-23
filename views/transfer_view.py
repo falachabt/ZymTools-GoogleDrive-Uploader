@@ -420,6 +420,11 @@ class AllFilesListWidget(QWidget):
             all_transfers = self.transfer_manager.get_all_transfers()
             
             for transfer_id, transfer in all_transfers.items():
+                # Safeguard: vérifier que l'objet a les attributs requis
+                if not hasattr(transfer, 'source_path'):
+                    print(f"⚠️  TransferItem {transfer_id} manque l'attribut 'source_path', ignoré")
+                    continue
+                
                 if transfer.is_folder_transfer and transfer.child_files:
                     # Fichiers individuels dans les dossiers
                     for file_path, file_item in transfer.child_files.items():
@@ -528,7 +533,11 @@ class AllFilesListWidget(QWidget):
                 self.files_table.setItem(row, 6, eta_item)
         
         except Exception as e:
+            import traceback
             print(f"Erreur lors de la mise à jour de la liste des fichiers: {e}")
+            print(f"Type d'erreur: {type(e).__name__}")
+            print(f"Traceback complet:")
+            traceback.print_exc()
 
 
 
