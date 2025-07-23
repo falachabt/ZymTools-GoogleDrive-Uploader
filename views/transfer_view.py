@@ -272,7 +272,7 @@ class AllFilesListWidget(QWidget):
         
         # Titre et contrôles
         header_layout = QHBoxLayout()
-        title_label = QLabel("📋 Liste exhaustive des fichiers")
+        title_label = QLabel("📋 Liste de tous les fichiers en cours de transfert")
         title_font = QFont()
         title_font.setBold(True)
         title_font.setPointSize(11)
@@ -282,22 +282,22 @@ class AllFilesListWidget(QWidget):
         header_layout.addStretch()
         
         # Filtres
-        self.show_pending_checkbox = QCheckBox("⏳ En attente")
+        self.show_pending_checkbox = QCheckBox("En attente")
         self.show_pending_checkbox.setChecked(True)
         self.show_pending_checkbox.stateChanged.connect(self.update_files_list)
         header_layout.addWidget(self.show_pending_checkbox)
         
-        self.show_in_progress_checkbox = QCheckBox("🔄 En cours")
+        self.show_in_progress_checkbox = QCheckBox("En cours")
         self.show_in_progress_checkbox.setChecked(True)
         self.show_in_progress_checkbox.stateChanged.connect(self.update_files_list)
         header_layout.addWidget(self.show_in_progress_checkbox)
         
-        self.show_completed_checkbox = QCheckBox("✅ Terminés")
+        self.show_completed_checkbox = QCheckBox("Terminés")
         self.show_completed_checkbox.setChecked(False)
         self.show_completed_checkbox.stateChanged.connect(self.update_files_list)
         header_layout.addWidget(self.show_completed_checkbox)
         
-        self.show_error_checkbox = QCheckBox("❌ Erreurs")
+        self.show_error_checkbox = QCheckBox("Erreurs")
         self.show_error_checkbox.setChecked(True)
         self.show_error_checkbox.stateChanged.connect(self.update_files_list)
         header_layout.addWidget(self.show_error_checkbox)

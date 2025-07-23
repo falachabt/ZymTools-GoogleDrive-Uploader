@@ -829,7 +829,7 @@ class DriveExplorerMainWindow(QMainWindow):
 
             if folder_count > 0:
                 # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 10
+                upload_mode = 30
                 if upload_mode is None:
                     return  # Annulé
             else:
@@ -1670,7 +1670,7 @@ class DriveExplorerMainWindow(QMainWindow):
 
             if folder_count > 0:
                 # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 10
+                upload_mode = 30
                 if upload_mode is None:
                     return  # Annulé
             else:
