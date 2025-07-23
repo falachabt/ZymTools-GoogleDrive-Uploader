@@ -503,8 +503,11 @@ class SafeFolderUploadThread(QThread):
             # Créer le dossier racine
             # Ajoutez ce type d’appel à chaque opération Drive pour isolation SSL :
             fresh_client = self.get_fresh_client()
-            # Utilisez ensuite fresh_client pour vos opérations Google Drive (création de dossier, etc.)
-            main_folder_id = fresh_client.create_folder(folder_name, self.parent_id, self.is_shared_drive)
+            try:
+                # Utilisez ensuite fresh_client pour vos opérations Google Drive (création de dossier, etc.)
+                main_folder_id = fresh_client.create_folder(folder_name, self.parent_id, self.is_shared_drive)
+            finally:
+                fresh_client.close()
 
             # Créer la structure de dossiers de manière sécurisée
             self.status_signal.emit("📁 Création structure...")
