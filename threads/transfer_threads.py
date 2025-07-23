@@ -87,7 +87,7 @@ class SafeGoogleDriveUploader:
                     # Vérifier si le fichier existe déjà dans le dossier
                     file_name = os.path.basename(file_path)
                     if already_exists_in_folder(drive_client, parent_id, file_name):
-                        # Si le fichier existe déjà, on peut skippper
+                        # Si le fichier existe déjà, on peut skip
                         drive_client.close()
                         break
 
