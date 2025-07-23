@@ -453,7 +453,7 @@ class SafeFolderUploadThread(QThread):
                     # Throttling des updates de progrès pour éviter la surcharge UI
                     current_time = time.time()
                     should_update = (
-                        (current_time - getattr(self, 'last_progress_update', 0)) > 0.5 or  # Max 2 updates par seconde
+                        (current_time - getattr(self, 'last_progress_update', 0)) > 0.2 or  # Max 5 updates par seconde (amélioré)
                         self.uploaded_files + self.failed_files == self.total_files  # Toujours update à la fin
                     )
                     
@@ -520,7 +520,7 @@ class SafeFolderUploadThread(QThread):
                         # Throttling des updates de progrès pour éviter la surcharge UI
                         current_time = time.time()
                         should_update = (
-                            (current_time - getattr(self, 'last_progress_update', 0)) > 0.5 or  # Max 2 updates par seconde
+                            (current_time - getattr(self, 'last_progress_update', 0)) > 0.2 or  # Max 5 updates par seconde (amélioré)
                             self.uploaded_files + self.failed_files == self.total_files  # Toujours update à la fin
                         )
                         

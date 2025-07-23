@@ -2,10 +2,12 @@
 Vue pour afficher et gérer la liste des transferts
 """
 
+import os
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView,
                              QPushButton, QToolBar, QAction, QLabel,
                              QProgressBar, QSplitter, QGroupBox, QMenu,
-                             QHeaderView, QAbstractItemView)
+                             QHeaderView, QAbstractItemView, QTabWidget,
+                             QTableWidget, QTableWidgetItem, QCheckBox)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
 
@@ -244,6 +246,289 @@ class ErrorFilesWidget(QWidget):
             self.retry_files_requested.emit(transfer_id)
 
 
+class AllFilesListWidget(QWidget):
+    """Widget pour afficher tous les fichiers individuels en cours de transfert"""
+    
+    def __init__(self, transfer_manager: TransferManager):
+        """
+        Initialise le widget de liste exhaustive des fichiers
+        
+        Args:
+            transfer_manager: Gestionnaire de transferts
+        """
+        super().__init__()
+        self.transfer_manager = transfer_manager
+        self.setup_ui()
+        self.setup_timer()
+        
+        # Connecter aux signaux du gestionnaire de transferts
+        transfer_manager.transfer_updated.connect(self.update_files_list)
+        transfer_manager.transfer_added.connect(self.update_files_list)
+        transfer_manager.transfer_removed.connect(self.update_files_list)
+    
+    def setup_ui(self) -> None:
+        """Configure l'interface utilisateur"""
+        layout = QVBoxLayout()
+        
+        # Titre et contrôles
+        header_layout = QHBoxLayout()
+        title_label = QLabel("📋 Liste exhaustive des fichiers")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(11)
+        title_label.setFont(title_font)
+        header_layout.addWidget(title_label)
+        
+        header_layout.addStretch()
+        
+        # Filtres
+        self.show_pending_checkbox = QCheckBox("⏳ En attente")
+        self.show_pending_checkbox.setChecked(True)
+        self.show_pending_checkbox.stateChanged.connect(self.update_files_list)
+        header_layout.addWidget(self.show_pending_checkbox)
+        
+        self.show_in_progress_checkbox = QCheckBox("🔄 En cours")
+        self.show_in_progress_checkbox.setChecked(True)
+        self.show_in_progress_checkbox.stateChanged.connect(self.update_files_list)
+        header_layout.addWidget(self.show_in_progress_checkbox)
+        
+        self.show_completed_checkbox = QCheckBox("✅ Terminés")
+        self.show_completed_checkbox.setChecked(False)
+        self.show_completed_checkbox.stateChanged.connect(self.update_files_list)
+        header_layout.addWidget(self.show_completed_checkbox)
+        
+        self.show_error_checkbox = QCheckBox("❌ Erreurs")
+        self.show_error_checkbox.setChecked(True)
+        self.show_error_checkbox.stateChanged.connect(self.update_files_list)
+        header_layout.addWidget(self.show_error_checkbox)
+        
+        layout.addLayout(header_layout)
+        
+        # Statistiques rapides
+        self.stats_label = QLabel("Statistiques: ...")
+        layout.addWidget(self.stats_label)
+        
+        # Table des fichiers
+        self.files_table = QTableWidget()
+        self.files_table.setColumnCount(7)
+        self.files_table.setHorizontalHeaderLabels([
+            "Statut", "Nom du fichier", "Dossier parent", "Progrès", 
+            "Taille", "Vitesse", "ETA"
+        ])
+        
+        # Configurer la table
+        self.files_table.setAlternatingRowColors(True)
+        self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.files_table.setSortingEnabled(True)
+        
+        # Ajuster les colonnes
+        header = self.files_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.resizeSection(0, 80)  # Statut
+        header.resizeSection(1, 200)  # Nom
+        header.resizeSection(2, 150)  # Dossier parent
+        header.resizeSection(3, 100)  # Progrès
+        header.resizeSection(4, 80)   # Taille
+        header.resizeSection(5, 80)   # Vitesse
+        
+        layout.addWidget(self.files_table)
+        self.setLayout(layout)
+    
+    def setup_timer(self) -> None:
+        """Configure le timer pour les mises à jour automatiques"""
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_files_list)
+        self.update_timer.start(1000)  # Mise à jour toutes les secondes
+    
+    def get_status_icon(self, status: TransferStatus) -> str:
+        """Retourne l'icône correspondant au statut"""
+        status_icons = {
+            TransferStatus.PENDING: "⏳",
+            TransferStatus.IN_PROGRESS: "🔄",
+            TransferStatus.COMPLETED: "✅",
+            TransferStatus.ERROR: "❌",
+            TransferStatus.CANCELLED: "🚫",
+            TransferStatus.PAUSED: "⏸️"
+        }
+        return status_icons.get(status, "❓")
+    
+    def should_show_status(self, status: TransferStatus) -> bool:
+        """Détermine si un fichier avec ce statut doit être affiché"""
+        if status == TransferStatus.PENDING and not self.show_pending_checkbox.isChecked():
+            return False
+        if status == TransferStatus.IN_PROGRESS and not self.show_in_progress_checkbox.isChecked():
+            return False
+        if status == TransferStatus.COMPLETED and not self.show_completed_checkbox.isChecked():
+            return False
+        if status == TransferStatus.ERROR and not self.show_error_checkbox.isChecked():
+            return False
+        return True
+    
+    def format_size(self, size_bytes: int) -> str:
+        """Formate la taille en bytes"""
+        if size_bytes == 0:
+            return "0 B"
+        elif size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+    
+    def format_speed(self, speed: float) -> str:
+        """Formate la vitesse"""
+        if speed <= 0:
+            return "-"
+        elif speed < 1024:
+            return f"{speed:.1f} B/s"
+        elif speed < 1024 * 1024:
+            return f"{speed / 1024:.1f} KB/s"
+        elif speed < 1024 * 1024 * 1024:
+            return f"{speed / (1024 * 1024):.1f} MB/s"
+        else:
+            return f"{speed / (1024 * 1024 * 1024):.1f} GB/s"
+    
+    def calculate_eta(self, file_item: FileTransferItem) -> str:
+        """Calcule l'ETA pour un fichier"""
+        if file_item.status != TransferStatus.IN_PROGRESS or file_item.speed <= 0:
+            return "-"
+        
+        remaining_bytes = file_item.file_size - (file_item.file_size * file_item.progress / 100)
+        if remaining_bytes <= 0:
+            return "0s"
+        
+        eta_seconds = remaining_bytes / file_item.speed
+        
+        if eta_seconds < 60:
+            return f"{int(eta_seconds)}s"
+        elif eta_seconds < 3600:
+            return f"{int(eta_seconds / 60)}m {int(eta_seconds % 60)}s"
+        else:
+            hours = int(eta_seconds / 3600)
+            minutes = int((eta_seconds % 3600) / 60)
+            return f"{hours}h {minutes}m"
+    
+    def update_files_list(self) -> None:
+        """Met à jour la liste des fichiers"""
+        try:
+            # Collecter tous les fichiers de tous les transferts
+            all_files = []
+            stats = {"total": 0, "pending": 0, "in_progress": 0, "completed": 0, "error": 0}
+            
+            all_transfers = self.transfer_manager.get_all_transfers()
+            
+            for transfer_id, transfer in all_transfers.items():
+                if transfer.is_folder_transfer and transfer.child_files:
+                    # Fichiers individuels dans les dossiers
+                    for file_path, file_item in transfer.child_files.items():
+                        if self.should_show_status(file_item.status):
+                            all_files.append({
+                                'transfer_id': transfer_id,
+                                'file_item': file_item,
+                                'parent_folder': transfer.local_path
+                            })
+                        
+                        # Statistiques
+                        stats["total"] += 1
+                        if file_item.status == TransferStatus.PENDING:
+                            stats["pending"] += 1
+                        elif file_item.status == TransferStatus.IN_PROGRESS:
+                            stats["in_progress"] += 1
+                        elif file_item.status == TransferStatus.COMPLETED:
+                            stats["completed"] += 1
+                        elif file_item.status == TransferStatus.ERROR:
+                            stats["error"] += 1
+                else:
+                    # Fichiers simples
+                    if self.should_show_status(transfer.status):
+                        # Créer un FileTransferItem virtuel pour les fichiers simples
+                        file_item = FileTransferItem(
+                            transfer.local_path,
+                            os.path.basename(transfer.local_path),
+                            transfer.file_size
+                        )
+                        file_item.status = transfer.status
+                        file_item.progress = transfer.progress
+                        file_item.speed = transfer.speed
+                        file_item.error_message = transfer.error_message
+                        
+                        all_files.append({
+                            'transfer_id': transfer_id,
+                            'file_item': file_item,
+                            'parent_folder': os.path.dirname(transfer.local_path)
+                        })
+                    
+                    # Statistiques
+                    stats["total"] += 1
+                    if transfer.status == TransferStatus.PENDING:
+                        stats["pending"] += 1
+                    elif transfer.status == TransferStatus.IN_PROGRESS:
+                        stats["in_progress"] += 1
+                    elif transfer.status == TransferStatus.COMPLETED:
+                        stats["completed"] += 1
+                    elif transfer.status == TransferStatus.ERROR:
+                        stats["error"] += 1
+            
+            # Mettre à jour les statistiques
+            self.stats_label.setText(
+                f"📊 Total: {stats['total']} | "
+                f"⏳ En attente: {stats['pending']} | "
+                f"🔄 En cours: {stats['in_progress']} | "
+                f"✅ Terminés: {stats['completed']} | "
+                f"❌ Erreurs: {stats['error']}"
+            )
+            
+            # Mettre à jour la table (optimisé pour éviter les flashs)
+            current_row_count = self.files_table.rowCount()
+            new_row_count = len(all_files)
+            
+            # Ajuster le nombre de lignes si nécessaire
+            if current_row_count != new_row_count:
+                self.files_table.setRowCount(new_row_count)
+            
+            # Remplir la table
+            for row, file_data in enumerate(all_files):
+                file_item = file_data['file_item']
+                parent_folder = file_data['parent_folder']
+                
+                # Statut avec icône
+                status_item = QTableWidgetItem(f"{self.get_status_icon(file_item.status)} {file_item.status.value}")
+                self.files_table.setItem(row, 0, status_item)
+                
+                # Nom du fichier
+                name_item = QTableWidgetItem(file_item.file_name)
+                self.files_table.setItem(row, 1, name_item)
+                
+                # Dossier parent
+                folder_item = QTableWidgetItem(os.path.basename(parent_folder) if parent_folder else "-")
+                self.files_table.setItem(row, 2, folder_item)
+                
+                # Progrès
+                if file_item.status == TransferStatus.IN_PROGRESS:
+                    progress_text = f"{file_item.progress}%"
+                elif file_item.status == TransferStatus.COMPLETED:
+                    progress_text = "100%"
+                else:
+                    progress_text = "0%" if file_item.progress == 0 else f"{file_item.progress}%"
+                progress_item = QTableWidgetItem(progress_text)
+                self.files_table.setItem(row, 3, progress_item)
+                
+                # Taille
+                size_item = QTableWidgetItem(self.format_size(file_item.file_size))
+                self.files_table.setItem(row, 4, size_item)
+                
+                # Vitesse
+                speed_item = QTableWidgetItem(self.format_speed(file_item.speed))
+                self.files_table.setItem(row, 5, speed_item)
+                
+                # ETA
+                eta_item = QTableWidgetItem(self.calculate_eta(file_item))
+                self.files_table.setItem(row, 6, eta_item)
+        
+        except Exception as e:
+            print(f"Erreur lors de la mise à jour de la liste des fichiers: {e}")
 
 
 
@@ -260,7 +545,7 @@ class TransferStatsWidget(QWidget):
         super().__init__()
         self.transfer_manager = transfer_manager
         self.last_update_time = 0  # Pour throttling des updates
-        self.update_interval = 2.0  # Seconds entre updates
+        self.update_interval = 0.5  # Seconds entre updates (amélioré pour plus de réactivité)
         self.setup_ui()
 
         # MODIFICATION : Ne pas démarrer le timer immédiatement
@@ -269,11 +554,11 @@ class TransferStatsWidget(QWidget):
         self.update_timer.timeout.connect(self.update_stats)
 
         # Démarrer le timer avec un délai pour laisser le temps à tout de s'initialiser
-        QTimer.singleShot(2000, self.start_updates)  # Démarrer après 2 secondes
+        QTimer.singleShot(1000, self.start_updates)  # Démarrer après 1 seconde
 
     def start_updates(self) -> None:
         """Démarre les mises à jour automatiques"""
-        self.update_timer.start(2000)  # Mise à jour toutes les 2 secondes (réduit la fréquence)
+        self.update_timer.start(1000)  # Mise à jour toutes les 1 secondes (améliorer la réactivité)
         self.update_stats()  # Première mise à jour immédiate
 
     def setup_ui(self) -> None:
@@ -340,13 +625,26 @@ class TransferStatsWidget(QWidget):
 
             # Calculer le progrès global et la vitesse
             if active_transfers:
-                total_progress = sum(t.progress for t in active_transfers.values())
-                global_progress = total_progress / len(active_transfers)
+                # Améliorer le calcul du progrès global
+                total_progress = 0
+                total_weight = 0
+                total_speed = 0
+                
+                for transfer in active_transfers.values():
+                    if transfer.status == TransferStatus.IN_PROGRESS:
+                        # Pondérer par la taille du transfert
+                        weight = max(transfer.file_size, 1)  # Éviter division par 0
+                        total_progress += transfer.progress * weight
+                        total_weight += weight
+                        total_speed += transfer.speed
 
-                total_speed = sum(t.speed for t in active_transfers.values())
-
-                self.global_progress.setValue(int(global_progress))
-                self.speed_label.setText(f"⚡ Vitesse: {self.format_speed(total_speed)}")
+                if total_weight > 0:
+                    global_progress = total_progress / total_weight
+                    self.global_progress.setValue(int(global_progress))
+                    self.speed_label.setText(f"⚡ Vitesse: {self.format_speed(total_speed)}")
+                else:
+                    self.global_progress.setValue(0)
+                    self.speed_label.setText("⚡ Vitesse: 0 B/s")
             else:
                 self.global_progress.setValue(0)
                 self.speed_label.setText("⚡ Vitesse: 0 B/s")
@@ -388,7 +686,7 @@ class TransferPanel(QWidget):
         self.connect_signals()
 
     def setup_ui(self) -> None:
-        """Configure l'interface utilisateur"""
+        """Configure l'interface utilisateur avec onglets"""
         layout = QVBoxLayout()
 
         # Titre du panneau
@@ -409,42 +707,55 @@ class TransferPanel(QWidget):
 
         layout.addLayout(title_layout)
 
-        # Contenu principal avec splitter pour séparer transferts et erreurs
+        # Contenu principal avec onglets
         self.main_content = QWidget()
         content_layout = QVBoxLayout(self.main_content)
 
-        # Barre d'outils
+        # Barre d'outils commune
         self.create_toolbar()
         content_layout.addWidget(self.toolbar)
 
-        # Splitter pour diviser transferts et erreurs
-        main_splitter = QSplitter(Qt.Vertical)
+        # Widget des statistiques globales (toujours visible)
+        self.stats_widget = TransferStatsWidget(self.transfer_manager)
+        content_layout.addWidget(self.stats_widget)
+
+        # Créer les onglets
+        self.tab_widget = QTabWidget()
         
-        # Widget principal des transferts
+        # Onglet 1: Vue traditionnelle avec transferts et erreurs
+        traditional_tab = QWidget()
+        traditional_layout = QVBoxLayout(traditional_tab)
+        
+        # Splitter pour diviser transferts et erreurs
+        traditional_splitter = QSplitter(Qt.Vertical)
+        
+        # Vue des transferts hiérarchique
         transfers_widget = QWidget()
         transfers_layout = QVBoxLayout(transfers_widget)
         
-        # Vue des transferts
         self.transfer_model = TransferListModel(self.transfer_manager)
         self.transfer_view = TransferTreeView()
         self.transfer_view.setModel(self.transfer_model)
         transfers_layout.addWidget(self.transfer_view)
-
-        # Widget des statistiques
-        self.stats_widget = TransferStatsWidget(self.transfer_manager)
-        transfers_layout.addWidget(self.stats_widget)
         
-        main_splitter.addWidget(transfers_widget)
+        traditional_splitter.addWidget(transfers_widget)
         
         # Widget des fichiers en erreur
         self.error_widget = ErrorFilesWidget(self.transfer_manager)
-        main_splitter.addWidget(self.error_widget)
+        traditional_splitter.addWidget(self.error_widget)
         
         # Proportions du splitter
-        main_splitter.setStretchFactor(0, 3)  # Transferts prennent 3/4
-        main_splitter.setStretchFactor(1, 1)  # Erreurs prennent 1/4
+        traditional_splitter.setStretchFactor(0, 3)  # Transferts prennent 3/4
+        traditional_splitter.setStretchFactor(1, 1)  # Erreurs prennent 1/4
         
-        content_layout.addWidget(main_splitter)
+        traditional_layout.addWidget(traditional_splitter)
+        self.tab_widget.addTab(traditional_tab, "📁 Vue dossiers")
+        
+        # Onglet 2: Liste exhaustive des fichiers individuels
+        self.all_files_widget = AllFilesListWidget(self.transfer_manager)
+        self.tab_widget.addTab(self.all_files_widget, "📋 Tous les fichiers")
+        
+        content_layout.addWidget(self.tab_widget)
 
         layout.addWidget(self.main_content)
         self.setLayout(layout)
