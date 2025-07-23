@@ -51,6 +51,11 @@ class ErrorFilesWidget(QWidget):
         # Connecter aux signaux pour mettre à jour la liste
         self.transfer_manager.transfer_updated.connect(self.update_error_list)
         
+        # Timer pour refresh périodique de la liste d'erreurs
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(lambda: self.update_error_list())
+        self.refresh_timer.start(3000)  # Refresh toutes les 3 secondes
+        
     def setup_ui(self) -> None:
         """Configure l'interface utilisateur"""
         layout = QVBoxLayout()
@@ -89,7 +94,7 @@ class ErrorFilesWidget(QWidget):
         layout.addWidget(self.error_tree)
         self.setLayout(layout)
         
-    def update_error_list(self, transfer_id: str) -> None:
+    def update_error_list(self, transfer_id: str = None) -> None:
         """Met à jour la liste des fichiers en erreur"""
         # Effacer le modèle existant
         self.error_model.clear()
@@ -102,34 +107,44 @@ class ErrorFilesWidget(QWidget):
         has_errors = False
         
         for tid, transfer in all_transfers.items():
-            if transfer.is_folder_transfer:
+            if transfer.is_folder_transfer and transfer.child_files:
                 failed_files = transfer.get_failed_files()
                 for file_path, file_item in failed_files.items():
-                    has_errors = True
-                    
-                    # Nom du fichier
-                    name_item = QStandardItem(file_item.file_name)
-                    name_item.setData(tid, Qt.UserRole)  # Stocker l'ID du transfert
-                    name_item.setData(file_path, Qt.UserRole + 1)  # Stocker le chemin du fichier
-                    
-                    # Dossier parent
-                    parent_item = QStandardItem(transfer.file_name)
-                    
-                    # Message d'erreur
-                    error_item = QStandardItem(file_item.error_message[:100] + "..." if len(file_item.error_message) > 100 else file_item.error_message)
-                    error_item.setToolTip(file_item.error_message)  # Message complet en tooltip
-                    
-                    # Nombre de tentatives
-                    retry_item = QStandardItem(str(file_item.retry_count))
-                    
-                    # Action (bouton retry sera ajouté via delegate si nécessaire)
-                    action_item = QStandardItem("Clic droit pour options")
-                    
-                    row = [name_item, parent_item, error_item, retry_item, action_item]
-                    self.error_model.appendRow(row)
+                    # Vérifier que le fichier est vraiment en erreur (pas en retry)
+                    if file_item.status == TransferStatus.ERROR:
+                        has_errors = True
+                        
+                        # Nom du fichier
+                        name_item = QStandardItem(file_item.file_name)
+                        name_item.setData(tid, Qt.UserRole)  # Stocker l'ID du transfert
+                        name_item.setData(file_path, Qt.UserRole + 1)  # Stocker le chemin du fichier
+                        
+                        # Dossier parent
+                        parent_item = QStandardItem(transfer.file_name)
+                        
+                        # Message d'erreur
+                        error_text = file_item.error_message[:100] + "..." if len(file_item.error_message) > 100 else file_item.error_message
+                        error_item = QStandardItem(error_text)
+                        error_item.setToolTip(file_item.error_message)  # Message complet en tooltip
+                        
+                        # Nombre de tentatives
+                        retry_item = QStandardItem(str(file_item.retry_count))
+                        
+                        # Action (bouton retry sera ajouté via delegate si nécessaire)
+                        action_item = QStandardItem("Clic droit pour options")
+                        
+                        row = [name_item, parent_item, error_item, retry_item, action_item]
+                        self.error_model.appendRow(row)
         
         # Activer/désactiver le bouton retry all
         self.retry_all_button.setEnabled(has_errors)
+        
+        # Mettre à jour le texte du bouton selon l'état
+        if has_errors:
+            error_count = self.error_model.rowCount()
+            self.retry_all_button.setText(f"🔄 Réessayer tout ({error_count})")
+        else:
+            self.retry_all_button.setText("🔄 Réessayer tout")
         
         # Ajuster les colonnes
         self.error_tree.resizeColumnToContents(0)
@@ -244,6 +259,8 @@ class TransferStatsWidget(QWidget):
         """
         super().__init__()
         self.transfer_manager = transfer_manager
+        self.last_update_time = 0  # Pour throttling des updates
+        self.update_interval = 2.0  # Seconds entre updates
         self.setup_ui()
 
         # MODIFICATION : Ne pas démarrer le timer immédiatement
@@ -256,7 +273,7 @@ class TransferStatsWidget(QWidget):
 
     def start_updates(self) -> None:
         """Démarre les mises à jour automatiques"""
-        self.update_timer.start(1000)  # Mise à jour chaque seconde
+        self.update_timer.start(2000)  # Mise à jour toutes les 2 secondes (réduit la fréquence)
         self.update_stats()  # Première mise à jour immédiate
 
     def setup_ui(self) -> None:
@@ -297,6 +314,13 @@ class TransferStatsWidget(QWidget):
     def update_stats(self) -> None:
         """Met à jour les statistiques affichées"""
         try:
+            # Throttling: ne pas mettre à jour trop souvent
+            import time
+            current_time = time.time()
+            if current_time - self.last_update_time < self.update_interval:
+                return
+            self.last_update_time = current_time
+            
             # PROTECTION : Vérifier que le transfer_manager existe
             if not hasattr(self, 'transfer_manager') or self.transfer_manager is None:
                 return

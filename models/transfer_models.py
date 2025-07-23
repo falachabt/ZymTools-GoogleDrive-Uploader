@@ -190,6 +190,10 @@ class TransferManager(QObject):
         super().__init__()
         self.transfers: Dict[str, TransferItem] = {}
         self._next_id = 1
+        
+        # Throttling pour les signaux UI
+        self._last_update_time = {}  # Par transfer_id
+        self._update_interval = 0.5  # Secondes entre updates UI
 
     def generate_transfer_id(self) -> str:
         """Génère un ID unique pour un transfert"""
@@ -406,6 +410,17 @@ class TransferManager(QObject):
                     
                     transfer.end_time = datetime.now()
             
+            self._emit_transfer_updated_throttled(transfer_id)
+    
+    def _emit_transfer_updated_throttled(self, transfer_id: str) -> None:
+        """Émet le signal transfer_updated avec throttling pour éviter la surcharge UI"""
+        import time
+        current_time = time.time()
+        last_update = self._last_update_time.get(transfer_id, 0)
+        
+        # Émettre seulement si assez de temps s'est écoulé
+        if current_time - last_update >= self._update_interval:
+            self._last_update_time[transfer_id] = current_time
             self.transfer_updated.emit(transfer_id)
     
     def get_failed_files_for_retry(self, transfer_id: str) -> Dict[str, FileTransferItem]:
@@ -615,11 +630,45 @@ class TransferListModel(QStandardItemModel):
 
     def update_child_files(self, parent_item: QStandardItem, transfer: TransferItem) -> None:
         """Met à jour les fichiers enfants d'un transfert de dossier"""
-        # Supprimer les anciens enfants
-        parent_item.removeRows(0, parent_item.rowCount())
+        # Optimisation: ne pas recréer tous les enfants à chaque update
+        # Vérifier si on a des enfants à ajouter
+        current_child_count = parent_item.rowCount()
+        target_child_count = len(transfer.child_files)
         
-        # Ajouter les enfants mis à jour
-        self.add_child_files(parent_item, transfer)
+        # Si on n'a pas d'enfants ou pas assez, les ajouter
+        if current_child_count < target_child_count:
+            # Supprimer tous les enfants et les recréer (plus simple et plus fiable)
+            parent_item.removeRows(0, current_child_count)
+            self.add_child_files(parent_item, transfer)
+        elif current_child_count > 0:
+            # Mettre à jour les enfants existants seulement
+            self._update_existing_child_files(parent_item, transfer)
+    
+    def _update_existing_child_files(self, parent_item: QStandardItem, transfer: TransferItem) -> None:
+        """Met à jour les enfants existants sans les recréer"""
+        file_items = list(transfer.child_files.values())
+        
+        for i in range(min(parent_item.rowCount(), len(file_items))):
+            file_item = file_items[i]
+            
+            # Mettre à jour le statut (colonne 2)
+            status_item = parent_item.child(i, 2)
+            if status_item:
+                status_text = file_item.status.value
+                if file_item.retry_count > 0:
+                    status_text += f" (Retry {file_item.retry_count})"
+                status_item.setText(status_text)
+            
+            # Mettre à jour le progrès (colonne 3)
+            progress_item = parent_item.child(i, 3)
+            if progress_item:
+                progress_item.setText(f"{file_item.progress}%")
+            
+            # Mettre à jour la vitesse (colonne 4)
+            speed_item = parent_item.child(i, 4)
+            if speed_item:
+                speed_text = f"{format_file_size(int(file_item.speed))}/s" if file_item.speed > 0 else ""
+                speed_item.setText(speed_text)
 
     def get_transfer_id_from_row(self, row: int) -> Optional[str]:
         """

@@ -20,7 +20,7 @@ from config.settings import (WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT,
 from core.cache_manager import CacheManager
 from core.google_drive_client import GoogleDriveClient
 from threads.file_load_threads import LocalFileLoadThread, DriveFileLoadThread
-from threads.transfer_threads import UploadThread, FolderUploadThread, DownloadThread, SafeFolderUploadThread
+from threads.transfer_threads import UploadThread, FolderUploadThread, DownloadThread, SafeFolderUploadThread, RetryUploadThread
 from models.file_models import FileListModel, LocalFileModel
 from models.transfer_models import  TransferManager
 from views.tree_views import LocalTreeView, DriveTreeView
@@ -1756,11 +1756,42 @@ class DriveExplorerMainWindow(QMainWindow):
         # Marquer les fichiers pour retry dans le transfer manager
         retry_files = self.transfer_manager.retry_failed_files(transfer_id)
         
-        self.status_bar.showMessage(f"🔄 Réessai programmé pour {len(retry_files)} fichier(s)...", 3000)
+        if not retry_files:
+            self.status_bar.showMessage("⚠️ Aucun fichier disponible pour réessai", 3000)
+            return
         
-        # Note: La logique de retry sera gérée par le transfer thread existant
-        # ou un nouveau thread si nécessaire. Pour l'instant, on marque juste les fichiers
-        # pour retry et ils seront traités lors du prochain upload de ce dossier.
+        self.status_bar.showMessage(f"🔄 Démarrage du réessai pour {len(retry_files)} fichier(s)...", 3000)
+        
+        # Créer un thread de retry spécialisé pour traiter seulement les fichiers échoués
+        self.start_retry_upload_thread(transfer, retry_files)
+
+    def start_retry_upload_thread(self, transfer, retry_files) -> None:
+        """Démarre un thread spécialisé pour réessayer les fichiers échoués"""
+        if not self.connected:
+            self.status_bar.showMessage("❌ Pas de connexion Google Drive", 3000)
+            return
+            
+        try:
+            # Créer un thread de retry personnalisé
+            retry_thread = RetryUploadThread(
+                drive_client=self.drive_client,
+                transfer=transfer,
+                retry_files=retry_files,
+                transfer_manager=self.transfer_manager
+            )
+            
+            # Connecter les signaux
+            retry_thread.progress_signal.connect(lambda p: self.status_bar.showMessage(f"🔄 Retry: {p}%", 1000))
+            retry_thread.completed_signal.connect(lambda: self.status_bar.showMessage("✅ Retry terminé", 3000))
+            retry_thread.error_signal.connect(lambda err: self.status_bar.showMessage(f"❌ Erreur retry: {err[:50]}...", 5000))
+            retry_thread.status_signal.connect(lambda status: self.status_bar.showMessage(status, 2000))
+            
+            # Démarrer le thread
+            retry_thread.start()
+            self.folder_upload_threads.append(retry_thread)
+            
+        except Exception as e:
+            self.status_bar.showMessage(f"❌ Erreur lors du démarrage du retry: {str(e)}", 5000)
 
     def clear_completed_transfers(self) -> None:
         """Supprime tous les transferts terminés"""
