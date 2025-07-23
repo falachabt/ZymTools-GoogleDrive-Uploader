@@ -115,23 +115,65 @@ class TransferItem:
         return remaining_bytes / self.speed
 
     def get_speed_text(self) -> str:
-        """Retourne la vitesse formatée"""
-        if self.speed <= 0:
-            return "0 B/s"
-        return f"{format_file_size(int(self.speed))}/s"
+        """Retourne la vitesse formatée (agrégée pour les dossiers)"""
+        if self.is_folder_transfer and self.child_files:
+            # Calculer la vitesse agrégée des fichiers en cours
+            total_speed = sum(f.speed for f in self.child_files.values() 
+                            if f.status == TransferStatus.IN_PROGRESS)
+            if total_speed <= 0:
+                return "0 B/s"
+            return f"{format_file_size(int(total_speed))}/s"
+        else:
+            # Fichier simple
+            if self.speed <= 0:
+                return "0 B/s"
+            return f"{format_file_size(int(self.speed))}/s"
 
     def get_eta_text(self) -> str:
-        """Retourne l'ETA formaté"""
-        eta = self.get_eta()
-        if eta is None:
+        """Retourne l'ETA formaté (calculé pour les dossiers)"""
+        if self.is_folder_transfer and self.child_files:
+            # Calculer l'ETA basé sur les fichiers restants et leur vitesse moyenne
+            in_progress_files = [f for f in self.child_files.values() 
+                               if f.status == TransferStatus.IN_PROGRESS]
+            pending_files = [f for f in self.child_files.values() 
+                           if f.status == TransferStatus.PENDING]
+            
+            if not in_progress_files and not pending_files:
+                return "-"
+            
+            # Calculer la vitesse moyenne des fichiers en cours
+            total_speed = sum(f.speed for f in in_progress_files if f.speed > 0)
+            if total_speed <= 0:
+                return "∞"
+            
+            # Estimer le temps restant basé sur la taille moyenne et les fichiers restants
+            if in_progress_files:
+                avg_file_size = sum(f.file_size for f in in_progress_files) / len(in_progress_files)
+                remaining_bytes = sum((f.file_size - (f.file_size * f.progress / 100)) for f in in_progress_files)
+                remaining_bytes += len(pending_files) * avg_file_size
+                
+                eta_seconds = remaining_bytes / total_speed
+                
+                if eta_seconds < 60:
+                    return f"{int(eta_seconds)}s"
+                elif eta_seconds < 3600:
+                    return f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s"
+                else:
+                    return f"{int(eta_seconds // 3600)}h {int((eta_seconds % 3600) // 60)}m"
+            
             return "∞"
-
-        if eta < 60:
-            return f"{int(eta)}s"
-        elif eta < 3600:
-            return f"{int(eta // 60)}m {int(eta % 60)}s"
         else:
-            return f"{int(eta // 3600)}h {int((eta % 3600) // 60)}m"
+            # Fichier simple
+            eta = self.get_eta()
+            if eta is None:
+                return "∞"
+
+            if eta < 60:
+                return f"{int(eta)}s"
+            elif eta < 3600:
+                return f"{int(eta // 60)}m {int(eta % 60)}s"
+            else:
+                return f"{int(eta // 3600)}h {int((eta % 3600) // 60)}m"
 
     def add_child_file(self, file_item: 'FileTransferItem') -> None:
         """Ajoute un fichier enfant au transfert de dossier"""
@@ -165,15 +207,27 @@ class TransferItem:
                 if file_item.status == TransferStatus.ERROR}
     
     def get_overall_progress(self) -> int:
-        """Calcule le progrès global basé sur les fichiers enfants"""
+        """Calcule le progrès global basé sur les fichiers enfants (pondéré par taille)"""
         if not self.child_files:
             return self.progress
         
-        total_files = len(self.child_files)
-        completed_files = sum(1 for f in self.child_files.values() 
-                            if f.status in [TransferStatus.COMPLETED, TransferStatus.ERROR])
+        # Calcul pondéré par la taille des fichiers
+        total_size = sum(f.file_size for f in self.child_files.values())
+        if total_size == 0:
+            # Si pas de taille, utiliser le comptage simple
+            completed_files = sum(1 for f in self.child_files.values() 
+                                if f.status in [TransferStatus.COMPLETED, TransferStatus.ERROR])
+            return int((completed_files / len(self.child_files)) * 100)
         
-        return int((completed_files / total_files) * 100) if total_files > 0 else 0
+        # Progrès pondéré par taille
+        completed_bytes = 0
+        for f in self.child_files.values():
+            if f.status == TransferStatus.COMPLETED:
+                completed_bytes += f.file_size
+            elif f.status == TransferStatus.IN_PROGRESS:
+                completed_bytes += (f.file_size * f.progress / 100)
+        
+        return int((completed_bytes / total_size) * 100) if total_size > 0 else 0
 
 
 class TransferManager(QObject):
@@ -230,7 +284,7 @@ class TransferManager(QObject):
                                  bytes_transferred: int = 0, speed: float = 0) -> None:
         """
         Met à jour le progrès d'un transfert
-
+        
         Args:
             transfer_id: ID du transfert
             progress: Progrès en pourcentage (0-100)
@@ -239,7 +293,13 @@ class TransferManager(QObject):
         """
         if transfer_id in self.transfers:
             transfer = self.transfers[transfer_id]
-            transfer.progress = progress
+            
+            # Pour les dossiers, calculer le progrès global automatiquement
+            if transfer.is_folder_transfer and transfer.child_files:
+                transfer.progress = transfer.get_overall_progress()
+            else:
+                transfer.progress = progress
+                
             transfer.bytes_transferred = bytes_transferred
             transfer.speed = speed
 
@@ -369,7 +429,7 @@ class TransferManager(QObject):
     
     def update_file_status_in_transfer(self, transfer_id: str, file_path: str, 
                                      status: TransferStatus, progress: int = 0, 
-                                     error_message: str = "") -> None:
+                                     error_message: str = "", speed: float = 0) -> None:
         """
         Met à jour le statut d'un fichier dans un transfert de dossier
         
@@ -379,10 +439,15 @@ class TransferManager(QObject):
             status: Nouveau statut
             progress: Progrès en pourcentage
             error_message: Message d'erreur si applicable
+            speed: Vitesse en bytes/seconde
         """
         if transfer_id in self.transfers:
             transfer = self.transfers[transfer_id]
             transfer.update_child_file_status(file_path, status, progress, error_message)
+            
+            # Mettre à jour la vitesse du fichier
+            if file_path in transfer.child_files:
+                transfer.child_files[file_path].speed = speed
             
             # Mettre à jour le progrès global du transfert
             if transfer.is_folder_transfer:
@@ -529,13 +594,17 @@ class TransferListModel(QStandardItemModel):
         # Statut
         status_item = QStandardItem(transfer.status.value)
 
-        # Progrès
-        progress_text = f"{transfer.progress}%"
+        # Progrès (utiliser le progrès calculé pour les dossiers)
         if transfer.is_folder_transfer and transfer.child_files:
+            overall_progress = transfer.get_overall_progress()
             completed = transfer.get_completed_files_count()
             failed = transfer.get_failed_files_count()
             total = len(transfer.child_files)
-            progress_text += f" ({completed + failed}/{total})"
+            progress_text = f"{overall_progress}% ({completed + failed}/{total})"
+            if failed > 0:
+                progress_text += f" - {failed} erreur(s)"
+        else:
+            progress_text = f"{transfer.progress}%"
         progress_item = QStandardItem(progress_text)
 
         # Vitesse
@@ -609,15 +678,17 @@ class TransferListModel(QStandardItemModel):
                 # Mettre à jour les colonnes principales
                 self.item(row, 2).setText(transfer.status.value)
                 
-                # Progrès avec informations détaillées pour les dossiers
-                progress_text = f"{transfer.progress}%"
+                # Progrès avec informations détaillées pour les dossiers (utiliser le progrès calculé)
                 if transfer.is_folder_transfer and transfer.child_files:
+                    overall_progress = transfer.get_overall_progress()
                     completed = transfer.get_completed_files_count()
                     failed = transfer.get_failed_files_count()
                     total = len(transfer.child_files)
-                    progress_text += f" ({completed + failed}/{total})"
+                    progress_text = f"{overall_progress}% ({completed + failed}/{total})"
                     if failed > 0:
                         progress_text += f" - {failed} erreur(s)"
+                else:
+                    progress_text = f"{transfer.progress}%"
                 
                 self.item(row, 3).setText(progress_text)
                 self.item(row, 4).setText(transfer.get_speed_text())

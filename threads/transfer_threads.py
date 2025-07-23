@@ -378,6 +378,9 @@ class SafeFolderUploadThread(QThread):
                     self.transfer_manager.update_file_status_in_transfer(
                         self.transfer_id, file_path, TransferStatus.IN_PROGRESS
                     )
+                
+                # Tracking du temps pour calculer la vitesse
+                start_time = time.time()
 
                 # Vérifier si le fichier existe déjà sur Drive
                 if already_exists_in_folder(SafeGoogleDriveUploader.get_fresh_client(), parent_id, file_name):
@@ -402,11 +405,15 @@ class SafeFolderUploadThread(QThread):
                     file_info['file_path'], parent_id,
                     self.is_shared_drive
                 )
+                
+                # Calculer la vitesse d'upload
+                upload_time = time.time() - start_time
+                file_speed = file_info['size'] / upload_time if upload_time > 0 else 0
 
-                # Mettre à jour le succès dans le transfer manager
+                # Mettre à jour le succès dans le transfer manager avec vitesse
                 if self.transfer_manager and self.transfer_id:
                     self.transfer_manager.update_file_status_in_transfer(
-                        self.transfer_id, file_path, TransferStatus.COMPLETED
+                        self.transfer_id, file_path, TransferStatus.COMPLETED, 100, "", file_speed
                     )
                     # Sauvegarder l'ID du fichier uploadé
                     transfer = self.transfer_manager.get_transfer(self.transfer_id)
