@@ -5,9 +5,10 @@ Modèles de données pour la gestion des transferts
 import os
 from datetime import datetime
 from enum import Enum
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
+from PyQt5.QtCore import Qt
 
 from utils.helpers import format_file_size
 
@@ -28,6 +29,38 @@ class TransferType(Enum):
     UPLOAD_FOLDER = "⬆️ Upload dossier"
     DOWNLOAD_FILE = "⬇️ Download fichier"
     DOWNLOAD_FOLDER = "⬇️ Download dossier"
+
+
+class FileTransferItem:
+    """Représente un fichier individuel dans un transfert"""
+    
+    def __init__(self, file_path: str, file_name: str, file_size: int = 0, 
+                 relative_path: str = "", destination_folder_id: str = ""):
+        """
+        Initialise un élément de transfert de fichier
+        
+        Args:
+            file_path: Chemin complet du fichier
+            file_name: Nom du fichier
+            file_size: Taille du fichier en bytes
+            relative_path: Chemin relatif dans le dossier parent
+            destination_folder_id: ID du dossier de destination sur Google Drive
+        """
+        self.file_path = file_path
+        self.file_name = file_name
+        self.file_size = file_size
+        self.relative_path = relative_path
+        self.destination_folder_id = destination_folder_id
+        self.status = TransferStatus.PENDING
+        self.progress = 0
+        self.speed = 0
+        self.error_message = ""
+        self.start_time: Optional[datetime] = None
+        self.end_time: Optional[datetime] = None
+        self.bytes_transferred = 0
+        self.uploaded_file_id: str = ""  # ID du fichier une fois uploadé
+        self.retry_count = 0
+        self.exists_on_drive = False  # True si le fichier existe déjà sur Drive
 
 
 class TransferItem:
@@ -60,6 +93,11 @@ class TransferItem:
         self.start_time: Optional[datetime] = None
         self.end_time: Optional[datetime] = None
         self.bytes_transferred = 0
+        self.destination_folder_id: str = ""  # ID du dossier de destination sur Google Drive
+        
+        # Enhanced for individual file tracking
+        self.child_files: Dict[str, FileTransferItem] = {}  # Pour les transferts de dossiers
+        self.is_folder_transfer = transfer_type in [TransferType.UPLOAD_FOLDER, TransferType.DOWNLOAD_FOLDER]
 
     def get_elapsed_time(self) -> float:
         """Retourne le temps écoulé en secondes"""
@@ -94,6 +132,48 @@ class TransferItem:
             return f"{int(eta // 60)}m {int(eta % 60)}s"
         else:
             return f"{int(eta // 3600)}h {int((eta % 3600) // 60)}m"
+
+    def add_child_file(self, file_item: 'FileTransferItem') -> None:
+        """Ajoute un fichier enfant au transfert de dossier"""
+        if self.is_folder_transfer:
+            self.child_files[file_item.file_path] = file_item
+    
+    def update_child_file_status(self, file_path: str, status: TransferStatus, 
+                               progress: int = 0, error_message: str = "") -> None:
+        """Met à jour le statut d'un fichier enfant"""
+        if file_path in self.child_files:
+            file_item = self.child_files[file_path]
+            file_item.status = status
+            file_item.progress = progress
+            file_item.error_message = error_message
+            if status == TransferStatus.IN_PROGRESS and not file_item.start_time:
+                file_item.start_time = datetime.now()
+            elif status in [TransferStatus.COMPLETED, TransferStatus.ERROR, TransferStatus.CANCELLED]:
+                file_item.end_time = datetime.now()
+    
+    def get_completed_files_count(self) -> int:
+        """Retourne le nombre de fichiers terminés avec succès"""
+        return sum(1 for f in self.child_files.values() if f.status == TransferStatus.COMPLETED)
+    
+    def get_failed_files_count(self) -> int:
+        """Retourne le nombre de fichiers en erreur"""
+        return sum(1 for f in self.child_files.values() if f.status == TransferStatus.ERROR)
+    
+    def get_failed_files(self) -> Dict[str, 'FileTransferItem']:
+        """Retourne les fichiers en erreur"""
+        return {path: file_item for path, file_item in self.child_files.items() 
+                if file_item.status == TransferStatus.ERROR}
+    
+    def get_overall_progress(self) -> int:
+        """Calcule le progrès global basé sur les fichiers enfants"""
+        if not self.child_files:
+            return self.progress
+        
+        total_files = len(self.child_files)
+        completed_files = sum(1 for f in self.child_files.values() 
+                            if f.status in [TransferStatus.COMPLETED, TransferStatus.ERROR])
+        
+        return int((completed_files / total_files) * 100) if total_files > 0 else 0
 
 
 class TransferManager(QObject):
@@ -270,9 +350,110 @@ class TransferManager(QObject):
             if transfer.status == TransferStatus.PAUSED:
                 self.update_transfer_status(transfer_id, TransferStatus.IN_PROGRESS)
 
+    def add_file_to_transfer(self, transfer_id: str, file_item: FileTransferItem) -> None:
+        """
+        Ajoute un fichier à un transfert de dossier
+        
+        Args:
+            transfer_id: ID du transfert parent
+            file_item: Élément de fichier à ajouter
+        """
+        if transfer_id in self.transfers:
+            transfer = self.transfers[transfer_id]
+            transfer.add_child_file(file_item)
+            self.transfer_updated.emit(transfer_id)
+    
+    def update_file_status_in_transfer(self, transfer_id: str, file_path: str, 
+                                     status: TransferStatus, progress: int = 0, 
+                                     error_message: str = "") -> None:
+        """
+        Met à jour le statut d'un fichier dans un transfert de dossier
+        
+        Args:
+            transfer_id: ID du transfert parent
+            file_path: Chemin du fichier
+            status: Nouveau statut
+            progress: Progrès en pourcentage
+            error_message: Message d'erreur si applicable
+        """
+        if transfer_id in self.transfers:
+            transfer = self.transfers[transfer_id]
+            transfer.update_child_file_status(file_path, status, progress, error_message)
+            
+            # Mettre à jour le progrès global du transfert
+            if transfer.is_folder_transfer:
+                overall_progress = transfer.get_overall_progress()
+                transfer.progress = overall_progress
+                
+                # Déterminer le statut global basé sur les fichiers
+                failed_count = transfer.get_failed_files_count()
+                completed_count = transfer.get_completed_files_count()
+                total_count = len(transfer.child_files)
+                
+                if completed_count + failed_count == total_count and total_count > 0:
+                    # Tous les fichiers sont traités
+                    if failed_count == 0:
+                        # Tous réussis
+                        transfer.status = TransferStatus.COMPLETED
+                    elif completed_count > 0:
+                        # Certains réussis, certains échoués - garder en erreur mais avec infos détaillées
+                        transfer.status = TransferStatus.ERROR
+                        transfer.error_message = f"{failed_count} fichier(s) échoué(s) sur {total_count}"
+                    else:
+                        # Tous échoués
+                        transfer.status = TransferStatus.ERROR
+                        transfer.error_message = "Tous les fichiers ont échoué"
+                    
+                    transfer.end_time = datetime.now()
+            
+            self.transfer_updated.emit(transfer_id)
+    
+    def get_failed_files_for_retry(self, transfer_id: str) -> Dict[str, FileTransferItem]:
+        """
+        Retourne les fichiers en erreur d'un transfert pour retry
+        
+        Args:
+            transfer_id: ID du transfert
+            
+        Returns:
+            Dictionnaire des fichiers en erreur
+        """
+        if transfer_id in self.transfers:
+            transfer = self.transfers[transfer_id]
+            return transfer.get_failed_files()
+        return {}
+    
+    def retry_failed_files(self, transfer_id: str) -> List[FileTransferItem]:
+        """
+        Marque les fichiers échoués d'un transfert pour retry
+        
+        Args:
+            transfer_id: ID du transfert
+            
+        Returns:
+            Liste des fichiers à réessayer
+        """
+        failed_files = []
+        if transfer_id in self.transfers:
+            transfer = self.transfers[transfer_id]
+            for file_path, file_item in transfer.get_failed_files().items():
+                file_item.status = TransferStatus.PENDING
+                file_item.retry_count += 1
+                file_item.error_message = ""
+                file_item.start_time = None
+                file_item.end_time = None
+                failed_files.append(file_item)
+            
+            # Remettre le transfert en cours si il y a des fichiers à retry
+            if failed_files:
+                transfer.status = TransferStatus.IN_PROGRESS
+                self.transfer_updated.emit(transfer_id)
+        
+        return failed_files
+
 
 class TransferListModel(QStandardItemModel):
-    """Modèle pour afficher la liste des transferts"""
+    """Modèle pour afficher la liste des transferts avec support des fichiers individuels"""
 
     def __init__(self, transfer_manager: TransferManager):
         """
@@ -284,7 +465,7 @@ class TransferListModel(QStandardItemModel):
         super().__init__()
         self.transfer_manager = transfer_manager
         self.setHorizontalHeaderLabels([
-            "Fichier", "Type", "Statut", "Progrès",
+            "Fichier/Dossier", "Type", "Statut", "Progrès",
             "Vitesse", "ETA", "Taille", "Destination"
         ])
 
@@ -318,9 +499,14 @@ class TransferListModel(QStandardItemModel):
         """Ajoute une ligne pour un transfert"""
         row = self.rowCount()
 
-        # Fichier
+        # Fichier/Dossier
         file_item = QStandardItem(transfer.file_name)
         file_item.setData(transfer.transfer_id)  # Stocker l'ID pour référence
+        
+        # Pour les dossiers, ajouter un indicateur expandable
+        if transfer.is_folder_transfer:
+            file_item.setText(f"📁 {transfer.file_name}")
+            file_item.setData(True, Qt.UserRole + 1)  # Marquer comme dossier
 
         # Type
         type_item = QStandardItem(transfer.transfer_type.value)
@@ -329,7 +515,13 @@ class TransferListModel(QStandardItemModel):
         status_item = QStandardItem(transfer.status.value)
 
         # Progrès
-        progress_item = QStandardItem(f"{transfer.progress}%")
+        progress_text = f"{transfer.progress}%"
+        if transfer.is_folder_transfer and transfer.child_files:
+            completed = transfer.get_completed_files_count()
+            failed = transfer.get_failed_files_count()
+            total = len(transfer.child_files)
+            progress_text += f" ({completed + failed}/{total})"
+        progress_item = QStandardItem(progress_text)
 
         # Vitesse
         speed_item = QStandardItem(transfer.get_speed_text())
@@ -351,6 +543,47 @@ class TransferListModel(QStandardItemModel):
         self.setItem(row, 5, eta_item)
         self.setItem(row, 6, size_item)
         self.setItem(row, 7, dest_item)
+        
+        # Ajouter les fichiers enfants si c'est un dossier
+        if transfer.is_folder_transfer and transfer.child_files:
+            self.add_child_files(file_item, transfer)
+
+    def add_child_files(self, parent_item: QStandardItem, transfer: TransferItem) -> None:
+        """Ajoute les fichiers enfants sous un transfert de dossier"""
+        for file_path, file_item in transfer.child_files.items():
+            # Créer une ligne enfant pour chaque fichier
+            child_row = []
+            
+            # Nom du fichier avec indentation
+            name_item = QStandardItem(f"  📄 {file_item.file_name}")
+            name_item.setData(file_path, Qt.UserRole)  # Stocker le chemin du fichier
+            child_row.append(name_item)
+            
+            # Type
+            child_row.append(QStandardItem("Fichier"))
+            
+            # Statut
+            status_text = file_item.status.value
+            if file_item.retry_count > 0:
+                status_text += f" (Retry {file_item.retry_count})"
+            child_row.append(QStandardItem(status_text))
+            
+            # Progrès
+            child_row.append(QStandardItem(f"{file_item.progress}%"))
+            
+            # Vitesse
+            child_row.append(QStandardItem(f"{format_file_size(int(file_item.speed))}/s" if file_item.speed > 0 else ""))
+            
+            # ETA
+            child_row.append(QStandardItem(""))
+            
+            # Taille
+            child_row.append(QStandardItem(format_file_size(file_item.file_size) if file_item.file_size > 0 else ""))
+            
+            # Destination
+            child_row.append(QStandardItem(file_item.relative_path))
+            
+            parent_item.appendRow(child_row)
 
     def update_transfer_row(self, transfer: TransferItem) -> None:
         """Met à jour une ligne de transfert"""
@@ -358,12 +591,35 @@ class TransferListModel(QStandardItemModel):
         for row in range(self.rowCount()):
             item = self.item(row, 0)
             if item and item.data() == transfer.transfer_id:
-                # Mettre à jour les colonnes
+                # Mettre à jour les colonnes principales
                 self.item(row, 2).setText(transfer.status.value)
-                self.item(row, 3).setText(f"{transfer.progress}%")
+                
+                # Progrès avec informations détaillées pour les dossiers
+                progress_text = f"{transfer.progress}%"
+                if transfer.is_folder_transfer and transfer.child_files:
+                    completed = transfer.get_completed_files_count()
+                    failed = transfer.get_failed_files_count()
+                    total = len(transfer.child_files)
+                    progress_text += f" ({completed + failed}/{total})"
+                    if failed > 0:
+                        progress_text += f" - {failed} erreur(s)"
+                
+                self.item(row, 3).setText(progress_text)
                 self.item(row, 4).setText(transfer.get_speed_text())
                 self.item(row, 5).setText(transfer.get_eta_text())
+                
+                # Mettre à jour les fichiers enfants
+                if transfer.is_folder_transfer:
+                    self.update_child_files(item, transfer)
                 break
+
+    def update_child_files(self, parent_item: QStandardItem, transfer: TransferItem) -> None:
+        """Met à jour les fichiers enfants d'un transfert de dossier"""
+        # Supprimer les anciens enfants
+        parent_item.removeRows(0, parent_item.rowCount())
+        
+        # Ajouter les enfants mis à jour
+        self.add_child_files(parent_item, transfer)
 
     def get_transfer_id_from_row(self, row: int) -> Optional[str]:
         """

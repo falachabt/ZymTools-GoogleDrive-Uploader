@@ -265,7 +265,7 @@ class SafeFolderUploadThread(QThread):
         return count, total_size
 
     def collect_all_files(self, folder_path: str) -> List[Dict[str, Any]]:
-        """Collecte tous les fichiers de manière récursive"""
+        """Collecte tous les fichiers de manière récursive et les ajoute au TransferManager"""
         files_to_process = []
 
         try:
@@ -276,12 +276,26 @@ class SafeFolderUploadThread(QThread):
                     if not file.lower().endswith('.tif'):
                         file_path = os.path.join(root, file)
                         if os.path.exists(file_path):
-                            files_to_process.append({
+                            file_info = {
                                 'file_path': file_path,
                                 'file_name': file,
                                 'relative_dir': rel_path if rel_path != '.' else '',
                                 'size': os.path.getsize(file_path)
-                            })
+                            }
+                            files_to_process.append(file_info)
+                            
+                            # Créer un FileTransferItem et l'ajouter au transfert
+                            if self.transfer_manager and self.transfer_id:
+                                from models.transfer_models import FileTransferItem
+                                file_item = FileTransferItem(
+                                    file_path=file_path,
+                                    file_name=file,
+                                    file_size=file_info['size'],
+                                    relative_path=rel_path if rel_path != '.' else '',
+                                    destination_folder_id=""  # Sera mis à jour plus tard
+                                )
+                                self.transfer_manager.add_file_to_transfer(self.transfer_id, file_item)
+                                
         except Exception as e:
             print(f"Erreur lors de la collecte des fichiers: {e}")
 
@@ -348,7 +362,7 @@ class SafeFolderUploadThread(QThread):
         results = []
 
         def upload_single_file_safe(file_info):
-            """Upload sécurisé d'un seul fichier"""
+            """Upload sécurisé d'un seul fichier avec tracking individuel"""
             try:
                 with QMutexLocker(self.cancelled_mutex):
                     if self.is_cancelled:
@@ -356,15 +370,49 @@ class SafeFolderUploadThread(QThread):
 
                 # Déterminer le dossier parent
                 parent_id = folder_mapping.get(file_info['relative_dir'], self.parent_id)
-
-                # Status update
+                file_path = file_info['file_path']
                 file_name = file_info['file_name']
+
+                # Mettre à jour le statut du fichier dans le transfer manager
+                if self.transfer_manager and self.transfer_id:
+                    self.transfer_manager.update_file_status_in_transfer(
+                        self.transfer_id, file_path, TransferStatus.IN_PROGRESS
+                    )
+
+                # Vérifier si le fichier existe déjà sur Drive
+                if already_exists_in_folder(SafeGoogleDriveUploader.get_fresh_client(), parent_id, file_name):
+                    if self.transfer_manager and self.transfer_id:
+                        self.transfer_manager.update_file_status_in_transfer(
+                            self.transfer_id, file_path, TransferStatus.COMPLETED
+                        )
+                        # Marquer le fichier comme existant
+                        transfer = self.transfer_manager.get_transfer(self.transfer_id)
+                        if transfer and file_path in transfer.child_files:
+                            transfer.child_files[file_path].exists_on_drive = True
+                    
+                    return {
+                        'success': True,
+                        'file_id': 'existing',
+                        'file_info': file_info,
+                        'skipped': True
+                    }
 
                 # Upload sécurisé avec retry
                 file_id = SafeGoogleDriveUploader.safe_upload_file(
                     file_info['file_path'], parent_id,
                     self.is_shared_drive
                 )
+
+                # Mettre à jour le succès dans le transfer manager
+                if self.transfer_manager and self.transfer_id:
+                    self.transfer_manager.update_file_status_in_transfer(
+                        self.transfer_id, file_path, TransferStatus.COMPLETED
+                    )
+                    # Sauvegarder l'ID du fichier uploadé
+                    transfer = self.transfer_manager.get_transfer(self.transfer_id)
+                    if transfer and file_path in transfer.child_files:
+                        transfer.child_files[file_path].uploaded_file_id = file_id
+                        transfer.child_files[file_path].destination_folder_id = parent_id
 
                 return {
                     'success': True,
@@ -373,6 +421,12 @@ class SafeFolderUploadThread(QThread):
                 }
 
             except Exception as e:
+                # Mettre à jour l'erreur dans le transfer manager
+                if self.transfer_manager and self.transfer_id:
+                    self.transfer_manager.update_file_status_in_transfer(
+                        self.transfer_id, file_path, TransferStatus.ERROR, 0, str(e)
+                    )
+                
                 return {
                     'success': False,
                     'error': str(e),
@@ -412,7 +466,10 @@ class SafeFolderUploadThread(QThread):
 
                 # Status
                 if result['success']:
-                    self.status_signal.emit(f"✅ Terminé: {result['file_info']['file_name']}")
+                    if result.get('skipped', False):
+                        self.status_signal.emit(f"⏭️ Ignoré (existe): {result['file_info']['file_name']}")
+                    else:
+                        self.status_signal.emit(f"✅ Terminé: {result['file_info']['file_name']}")
                 else:
                     if not result.get('cancelled', False):
                         self.status_signal.emit(f"❌ Erreur: {result['file_info']['file_name']}")
@@ -466,7 +523,10 @@ class SafeFolderUploadThread(QThread):
 
                     # Status
                     if result['success']:
-                        self.status_signal.emit(f"✅ Terminé: {result['file_info']['file_name']}")
+                        if result.get('skipped', False):
+                            self.status_signal.emit(f"⏭️ Ignoré (existe): {result['file_info']['file_name']}")
+                        else:
+                            self.status_signal.emit(f"✅ Terminé: {result['file_info']['file_name']}")
                     else:
                         if not result.get('cancelled', False):
                             self.status_signal.emit(f"❌ Erreur: {result['file_info']['file_name']}")

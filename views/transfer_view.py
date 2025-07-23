@@ -7,13 +7,13 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView,
                              QProgressBar, QSplitter, QGroupBox, QMenu,
                              QHeaderView, QAbstractItemView)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
 
-from models.transfer_models import TransferManager, TransferListModel, TransferStatus, TransferType
+from models.transfer_models import TransferManager, TransferListModel, TransferStatus, TransferType, FileTransferItem
 
 
 class TransferTreeView(QTreeView):
-    """Vue personnalisée pour la liste des transferts"""
+    """Vue personnalisée pour la liste des transferts avec support hiérarchique"""
 
     def __init__(self):
         """Initialise la vue"""
@@ -23,12 +23,210 @@ class TransferTreeView(QTreeView):
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setSortingEnabled(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
-
-
+        self.setExpandsOnDoubleClick(True)
+        self.setItemsExpandable(True)
+        self.setRootIsDecorated(True)
 
         # Ajuster les colonnes
         header = self.header()
         header.setStretchLastSection(True)
+
+
+class ErrorFilesWidget(QWidget):
+    """Widget pour afficher et gérer les fichiers en erreur"""
+    
+    retry_files_requested = pyqtSignal(str)  # transfer_id
+    
+    def __init__(self, transfer_manager: TransferManager):
+        """
+        Initialise le widget des fichiers en erreur
+        
+        Args:
+            transfer_manager: Gestionnaire de transferts
+        """
+        super().__init__()
+        self.transfer_manager = transfer_manager
+        self.setup_ui()
+        
+        # Connecter aux signaux pour mettre à jour la liste
+        self.transfer_manager.transfer_updated.connect(self.update_error_list)
+        
+    def setup_ui(self) -> None:
+        """Configure l'interface utilisateur"""
+        layout = QVBoxLayout()
+        
+        # Titre
+        title_layout = QHBoxLayout()
+        title_label = QLabel("❌ Fichiers en erreur")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        title_layout.addWidget(title_label)
+        
+        # Bouton pour réessayer tous les fichiers en erreur
+        self.retry_all_button = QPushButton("🔄 Réessayer tout")
+        self.retry_all_button.clicked.connect(self.retry_all_failed_files)
+        self.retry_all_button.setEnabled(False)
+        title_layout.addWidget(self.retry_all_button)
+        
+        title_layout.addStretch()
+        layout.addLayout(title_layout)
+        
+        # Liste des fichiers en erreur
+        self.error_tree = QTreeView()
+        self.error_tree.setAlternatingRowColors(True)
+        self.error_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.error_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.error_tree.customContextMenuRequested.connect(self.show_error_context_menu)
+        
+        # Modèle pour les erreurs
+        self.error_model = QStandardItemModel()
+        self.error_model.setHorizontalHeaderLabels([
+            "Fichier", "Dossier parent", "Erreur", "Tentatives", "Action"
+        ])
+        self.error_tree.setModel(self.error_model)
+        
+        layout.addWidget(self.error_tree)
+        self.setLayout(layout)
+        
+    def update_error_list(self, transfer_id: str) -> None:
+        """Met à jour la liste des fichiers en erreur"""
+        # Effacer le modèle existant
+        self.error_model.clear()
+        self.error_model.setHorizontalHeaderLabels([
+            "Fichier", "Dossier parent", "Erreur", "Tentatives", "Action"
+        ])
+        
+        # Parcourir tous les transferts pour trouver les fichiers en erreur
+        all_transfers = self.transfer_manager.get_all_transfers()
+        has_errors = False
+        
+        for tid, transfer in all_transfers.items():
+            if transfer.is_folder_transfer:
+                failed_files = transfer.get_failed_files()
+                for file_path, file_item in failed_files.items():
+                    has_errors = True
+                    
+                    # Nom du fichier
+                    name_item = QStandardItem(file_item.file_name)
+                    name_item.setData(tid, Qt.UserRole)  # Stocker l'ID du transfert
+                    name_item.setData(file_path, Qt.UserRole + 1)  # Stocker le chemin du fichier
+                    
+                    # Dossier parent
+                    parent_item = QStandardItem(transfer.file_name)
+                    
+                    # Message d'erreur
+                    error_item = QStandardItem(file_item.error_message[:100] + "..." if len(file_item.error_message) > 100 else file_item.error_message)
+                    error_item.setToolTip(file_item.error_message)  # Message complet en tooltip
+                    
+                    # Nombre de tentatives
+                    retry_item = QStandardItem(str(file_item.retry_count))
+                    
+                    # Action (bouton retry sera ajouté via delegate si nécessaire)
+                    action_item = QStandardItem("Clic droit pour options")
+                    
+                    row = [name_item, parent_item, error_item, retry_item, action_item]
+                    self.error_model.appendRow(row)
+        
+        # Activer/désactiver le bouton retry all
+        self.retry_all_button.setEnabled(has_errors)
+        
+        # Ajuster les colonnes
+        self.error_tree.resizeColumnToContents(0)
+        self.error_tree.resizeColumnToContents(1)
+        self.error_tree.resizeColumnToContents(3)
+    
+    def show_error_context_menu(self, position) -> None:
+        """Affiche le menu contextuel pour les fichiers en erreur"""
+        index = self.error_tree.indexAt(position)
+        if not index.isValid():
+            return
+            
+        # Récupérer les informations du fichier
+        name_item = self.error_model.item(index.row(), 0)
+        if not name_item:
+            return
+            
+        transfer_id = name_item.data(Qt.UserRole)
+        file_path = name_item.data(Qt.UserRole + 1)
+        
+        menu = QMenu(self)
+        
+        # Action pour réessayer ce fichier spécifique
+        retry_action = QAction("🔄 Réessayer ce fichier", self)
+        retry_action.triggered.connect(lambda: self.retry_single_file(transfer_id, file_path))
+        menu.addAction(retry_action)
+        
+        # Action pour ignorer ce fichier
+        ignore_action = QAction("🚫 Ignorer ce fichier", self)
+        ignore_action.triggered.connect(lambda: self.ignore_file(transfer_id, file_path))
+        menu.addAction(ignore_action)
+        
+        menu.addSeparator()
+        
+        # Action pour voir les détails de l'erreur
+        details_action = QAction("📄 Détails de l'erreur", self)
+        details_action.triggered.connect(lambda: self.show_error_details(transfer_id, file_path))
+        menu.addAction(details_action)
+        
+        menu.exec_(self.error_tree.viewport().mapToGlobal(position))
+    
+    def retry_single_file(self, transfer_id: str, file_path: str) -> None:
+        """Réessaie un seul fichier"""
+        transfer = self.transfer_manager.get_transfer(transfer_id)
+        if transfer and file_path in transfer.child_files:
+            file_item = transfer.child_files[file_path]
+            file_item.status = TransferStatus.PENDING
+            file_item.retry_count += 1
+            file_item.error_message = ""
+            file_item.start_time = None
+            file_item.end_time = None
+            
+            # Remettre le transfert en cours
+            transfer.status = TransferStatus.IN_PROGRESS
+            
+            # Émettre le signal pour déclencher le retry
+            self.retry_files_requested.emit(transfer_id)
+            
+            self.transfer_manager.transfer_updated.emit(transfer_id)
+    
+    def ignore_file(self, transfer_id: str, file_path: str) -> None:
+        """Ignore un fichier en erreur (le marque comme annulé)"""
+        transfer = self.transfer_manager.get_transfer(transfer_id)
+        if transfer and file_path in transfer.child_files:
+            transfer.child_files[file_path].status = TransferStatus.CANCELLED
+            self.transfer_manager.transfer_updated.emit(transfer_id)
+    
+    def show_error_details(self, transfer_id: str, file_path: str) -> None:
+        """Affiche les détails d'une erreur"""
+        transfer = self.transfer_manager.get_transfer(transfer_id)
+        if transfer and file_path in transfer.child_files:
+            file_item = transfer.child_files[file_path]
+            
+            from views.dialogs import ErrorDialog
+            ErrorDialog.show_error(
+                "Détails de l'erreur",
+                f"Fichier: {file_item.file_name}\n"
+                f"Chemin: {file_path}\n"
+                f"Tentatives: {file_item.retry_count}\n"
+                f"Erreur: {file_item.error_message}",
+                self
+            )
+    
+    def retry_all_failed_files(self) -> None:
+        """Réessaie tous les fichiers en erreur"""
+        all_transfers = self.transfer_manager.get_all_transfers()
+        transfers_to_retry = []
+        
+        for transfer_id, transfer in all_transfers.items():
+            if transfer.is_folder_transfer and transfer.get_failed_files():
+                failed_files = self.transfer_manager.retry_failed_files(transfer_id)
+                if failed_files:
+                    transfers_to_retry.append(transfer_id)
+        
+        # Émettre les signaux pour tous les transferts à réessayer
+        for transfer_id in transfers_to_retry:
+            self.retry_files_requested.emit(transfer_id)
 
 
 
@@ -144,12 +342,13 @@ class TransferStatsWidget(QWidget):
             return f"{speed / (1024 * 1024 * 1024):.1f} GB/s"
 
 class TransferPanel(QWidget):
-    """Panneau principal de gestion des transferts"""
+    """Panneau principal de gestion des transferts avec support des fichiers individuels"""
 
     # Signaux pour la communication avec la fenêtre principale
     cancel_transfer_requested = pyqtSignal(str)  # transfer_id
     pause_transfer_requested = pyqtSignal(str)  # transfer_id
     resume_transfer_requested = pyqtSignal(str)  # transfer_id
+    retry_files_requested = pyqtSignal(str)  # transfer_id
 
     def __init__(self, transfer_manager: TransferManager):
         """
@@ -161,10 +360,7 @@ class TransferPanel(QWidget):
         super().__init__()
         self.transfer_manager = transfer_manager
 
-
         self.setup_ui()
-
-
         self.connect_signals()
 
     def setup_ui(self) -> None:
@@ -181,8 +377,6 @@ class TransferPanel(QWidget):
         title_layout.addWidget(title_label)
         title_layout.addStretch()
 
-
-
         # Bouton pour réduire/agrandir
         self.toggle_button = QPushButton("🔽")
         self.toggle_button.setFixedSize(25, 25)
@@ -191,7 +385,7 @@ class TransferPanel(QWidget):
 
         layout.addLayout(title_layout)
 
-        # Contenu principal (peut être masqué)
+        # Contenu principal avec splitter pour séparer transferts et erreurs
         self.main_content = QWidget()
         content_layout = QVBoxLayout(self.main_content)
 
@@ -199,23 +393,37 @@ class TransferPanel(QWidget):
         self.create_toolbar()
         content_layout.addWidget(self.toolbar)
 
-
+        # Splitter pour diviser transferts et erreurs
+        main_splitter = QSplitter(Qt.Vertical)
+        
+        # Widget principal des transferts
+        transfers_widget = QWidget()
+        transfers_layout = QVBoxLayout(transfers_widget)
+        
         # Vue des transferts
         self.transfer_model = TransferListModel(self.transfer_manager)
-
         self.transfer_view = TransferTreeView()
-
-
         self.transfer_view.setModel(self.transfer_model)
-        content_layout.addWidget(self.transfer_view)
+        transfers_layout.addWidget(self.transfer_view)
 
         # Widget des statistiques
         self.stats_widget = TransferStatsWidget(self.transfer_manager)
-        content_layout.addWidget(self.stats_widget)
+        transfers_layout.addWidget(self.stats_widget)
+        
+        main_splitter.addWidget(transfers_widget)
+        
+        # Widget des fichiers en erreur
+        self.error_widget = ErrorFilesWidget(self.transfer_manager)
+        main_splitter.addWidget(self.error_widget)
+        
+        # Proportions du splitter
+        main_splitter.setStretchFactor(0, 3)  # Transferts prennent 3/4
+        main_splitter.setStretchFactor(1, 1)  # Erreurs prennent 1/4
+        
+        content_layout.addWidget(main_splitter)
 
         layout.addWidget(self.main_content)
         self.setLayout(layout)
-
 
         # État initial
         self.is_collapsed = False
@@ -259,6 +467,9 @@ class TransferPanel(QWidget):
 
         # Sélection
         self.transfer_view.selectionModel().selectionChanged.connect(self.update_toolbar_state)
+        
+        # Signaux du widget d'erreurs
+        self.error_widget.retry_files_requested.connect(self.retry_files_requested.emit)
 
     def show_context_menu(self, position) -> None:
         """Affiche le menu contextuel"""
@@ -388,7 +599,7 @@ class TransferPanel(QWidget):
 
         # Pas de sélection ou transfert invalide
         #self.pause_action.setEnabled(False)
-        s#elf.resume_action.setEnabled(False)
+        #self.resume_action.setEnabled(False)
         self.cancel_action.setEnabled(False)
 
     def get_transfer_count(self) -> int:

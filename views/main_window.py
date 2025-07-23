@@ -363,6 +363,7 @@ class DriveExplorerMainWindow(QMainWindow):
         self.transfer_panel.cancel_transfer_requested.connect(self.cancel_transfer)
         self.transfer_panel.pause_transfer_requested.connect(self.pause_transfer)
         self.transfer_panel.resume_transfer_requested.connect(self.resume_transfer)
+        self.transfer_panel.retry_files_requested.connect(self.retry_failed_files)
 
         # Connecter les signaux du transfer_manager pour mettre à jour l'onglet
         self.transfer_manager.transfer_added.connect(self.update_transfer_tab_title)
@@ -1740,6 +1741,26 @@ class DriveExplorerMainWindow(QMainWindow):
         """Reprend un transfert suspendu (fonctionnalité future)"""
         # Pour l'instant, juste mettre à jour le statut
         pass
+
+    def retry_failed_files(self, transfer_id: str) -> None:
+        """Réessaie les fichiers échoués d'un transfert de dossier"""
+        transfer = self.transfer_manager.get_transfer(transfer_id)
+        if not transfer or not transfer.is_folder_transfer:
+            return
+            
+        failed_files = self.transfer_manager.get_failed_files_for_retry(transfer_id)
+        if not failed_files:
+            self.status_bar.showMessage("⚠️ Aucun fichier en erreur à réessayer", 3000)
+            return
+            
+        # Marquer les fichiers pour retry dans le transfer manager
+        retry_files = self.transfer_manager.retry_failed_files(transfer_id)
+        
+        self.status_bar.showMessage(f"🔄 Réessai programmé pour {len(retry_files)} fichier(s)...", 3000)
+        
+        # Note: La logique de retry sera gérée par le transfer thread existant
+        # ou un nouveau thread si nécessaire. Pour l'instant, on marque juste les fichiers
+        # pour retry et ils seront traités lors du prochain upload de ce dossier.
 
     def clear_completed_transfers(self) -> None:
         """Supprime tous les transferts terminés"""
