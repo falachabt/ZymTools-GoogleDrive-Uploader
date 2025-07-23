@@ -409,3 +409,9 @@ class GoogleDriveClient:
         except Exception as e:
             print(f"Erreur lors de la suppression permanente: {str(e)}")
             self.service.files().delete(fileId=file_id).execute()
+
+    def close (self) -> None:
+        """
+        Ferme le client Google Drive
+        """
+        self.service.close()
