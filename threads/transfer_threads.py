@@ -313,11 +313,11 @@ class SafeFolderUploadThread(QThread):
                     for attempt in range(3):
                         try:
                             # Ajoutez ce type d’appel à chaque opération Drive pour isolation SSL :
-                            fresh_client = self.get_fresh_client()
-                            # Utilisez ensuite fresh_client pour vos opérations Google Drive (création de dossier, etc.)
-                            folder_id = fresh_client.create_folder(
-                                folder_name, parent_drive_id, self.is_shared_drive
-                            )
+                            with self.get_fresh_client() as fresh_client:
+                                # Utilisez ensuite fresh_client pour vos opérations Google Drive (création de dossier, etc.)
+                                folder_id = fresh_client.create_folder(
+                                    folder_name, parent_drive_id, self.is_shared_drive
+                                )
                             folder_mapping[rel_path] = folder_id
                             break
                         except Exception as e:
