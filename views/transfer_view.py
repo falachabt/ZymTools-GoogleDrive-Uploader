@@ -427,7 +427,7 @@ class AllFilesListWidget(QWidget):
                             all_files.append({
                                 'transfer_id': transfer_id,
                                 'file_item': file_item,
-                                'parent_folder': transfer.local_path
+                                'parent_folder': transfer.source_path
                             })
                         
                         # Statistiques
@@ -445,8 +445,8 @@ class AllFilesListWidget(QWidget):
                     if self.should_show_status(transfer.status):
                         # Créer un FileTransferItem virtuel pour les fichiers simples
                         file_item = FileTransferItem(
-                            transfer.local_path,
-                            os.path.basename(transfer.local_path),
+                            transfer.source_path,
+                            os.path.basename(transfer.source_path),
                             transfer.file_size
                         )
                         file_item.status = transfer.status
@@ -457,7 +457,7 @@ class AllFilesListWidget(QWidget):
                         all_files.append({
                             'transfer_id': transfer_id,
                             'file_item': file_item,
-                            'parent_folder': os.path.dirname(transfer.local_path)
+                            'parent_folder': os.path.dirname(transfer.source_path)
                         })
                     
                     # Statistiques
