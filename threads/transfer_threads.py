@@ -233,7 +233,7 @@ class SafeFolderUploadThread(QThread):
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
         # Limiter à un maximum sécurisé pour des performances optimales
-        self.max_parallel_uploads = min(max_parallel_uploads, 30)  # Maximum 5 au lieu de 30
+        self.max_parallel_uploads = min(max_parallel_uploads, 10)  # Maximum 10 au lieu de 30
         self.total_files = 0
         self.uploaded_files = 0
         self.failed_files = 0
@@ -450,10 +450,12 @@ class SafeFolderUploadThread(QThread):
                     else:
                         self.failed_files += 1
 
-                    # Throttling des updates de progrès pour éviter la surcharge UI
+                    # Throttling des updates de progrès pour éviter la surcharge UI (optimisé)
                     current_time = time.time()
+                    # Pour de gros volumes, réduire la fréquence des mises à jour
+                    update_interval = 1.0 if self.total_files > 500 else 0.5
                     should_update = (
-                        (current_time - getattr(self, 'last_progress_update', 0)) > 0.2 or  # Max 5 updates par seconde (amélioré)
+                        (current_time - getattr(self, 'last_progress_update', 0)) > update_interval or
                         self.uploaded_files + self.failed_files == self.total_files  # Toujours update à la fin
                     )
                     
@@ -483,9 +485,11 @@ class SafeFolderUploadThread(QThread):
                     if not result.get('cancelled', False):
                         self.status_signal.emit(f"❌ Erreur: {result['file_info']['file_name']}")
 
-                # Délai entre uploads pour éviter le rate limiting
+                # Délai entre uploads pour éviter le rate limiting (optimisé)
                 if not self.is_cancelled:
-                    time.sleep(0.001)  # 100ms entre chaque fichier
+                    # Délai adaptatif: plus court pour de gros volumes
+                    delay = 0.05 if self.total_files > 100 else 0.1
+                    time.sleep(delay)
         else:
             # Upload parallèle très limité et sécurisé
             with ThreadPoolExecutor(max_workers=self.max_parallel_uploads) as executor:

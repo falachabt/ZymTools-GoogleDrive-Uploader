@@ -308,12 +308,11 @@ class AllFilesListWidget(QWidget):
         self.stats_label = QLabel("Statistiques: ...")
         layout.addWidget(self.stats_label)
         
-        # Table des fichiers
+        # Table des fichiers (colonnes simplifiées pour de meilleures performances)
         self.files_table = QTableWidget()
-        self.files_table.setColumnCount(7)
+        self.files_table.setColumnCount(5)
         self.files_table.setHorizontalHeaderLabels([
-            "Statut", "Nom du fichier", "Dossier parent", "Progrès", 
-            "Taille", "Vitesse", "ETA"
+            "Statut", "Nom du fichier", "Dossier parent", "Taille", "ETA"
         ])
         
         # Configurer la table
@@ -321,24 +320,22 @@ class AllFilesListWidget(QWidget):
         self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.files_table.setSortingEnabled(True)
         
-        # Ajuster les colonnes
+        # Ajuster les colonnes (optimisé pour 5 colonnes)
         header = self.files_table.horizontalHeader()
         header.setStretchLastSection(True)
         header.resizeSection(0, 80)  # Statut
-        header.resizeSection(1, 200)  # Nom
-        header.resizeSection(2, 150)  # Dossier parent
-        header.resizeSection(3, 100)  # Progrès
-        header.resizeSection(4, 80)   # Taille
-        header.resizeSection(5, 80)   # Vitesse
+        header.resizeSection(1, 250)  # Nom (plus large)
+        header.resizeSection(2, 180)  # Dossier parent (plus large)
+        header.resizeSection(3, 100)  # Taille
         
         layout.addWidget(self.files_table)
         self.setLayout(layout)
     
     def setup_timer(self) -> None:
-        """Configure le timer pour les mises à jour automatiques"""
+        """Configure le timer pour les mises à jour automatiques (optimisé pour les performances)"""
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_files_list)
-        self.update_timer.start(1000)  # Mise à jour toutes les secondes
+        self.update_timer.start(3000)  # Réduit à 3 secondes pour économiser CPU
     
     def get_status_icon(self, status: TransferStatus) -> str:
         """Retourne l'icône correspondant au statut"""
@@ -510,27 +507,16 @@ class AllFilesListWidget(QWidget):
                 folder_item = QTableWidgetItem(os.path.basename(parent_folder) if parent_folder else "-")
                 self.files_table.setItem(row, 2, folder_item)
                 
-                # Progrès
-                if file_item.status == TransferStatus.IN_PROGRESS:
-                    progress_text = f"{file_item.progress}%"
-                elif file_item.status == TransferStatus.COMPLETED:
-                    progress_text = "100%"
-                else:
-                    progress_text = "0%" if file_item.progress == 0 else f"{file_item.progress}%"
-                progress_item = QTableWidgetItem(progress_text)
-                self.files_table.setItem(row, 3, progress_item)
-                
                 # Taille
                 size_item = QTableWidgetItem(self.format_size(file_item.file_size))
-                self.files_table.setItem(row, 4, size_item)
+                self.files_table.setItem(row, 3, size_item)
                 
-                # Vitesse
-                speed_item = QTableWidgetItem(self.format_speed(file_item.speed))
-                self.files_table.setItem(row, 5, speed_item)
-                
-                # ETA
-                eta_item = QTableWidgetItem(self.calculate_eta(file_item))
-                self.files_table.setItem(row, 6, eta_item)
+                # ETA (seulement pour les fichiers en cours)
+                if file_item.status == TransferStatus.IN_PROGRESS:
+                    eta_item = QTableWidgetItem(self.calculate_eta(file_item))
+                else:
+                    eta_item = QTableWidgetItem("-")
+                self.files_table.setItem(row, 4, eta_item)
         
         except Exception as e:
             import traceback
@@ -554,7 +540,7 @@ class TransferStatsWidget(QWidget):
         super().__init__()
         self.transfer_manager = transfer_manager
         self.last_update_time = 0  # Pour throttling des updates
-        self.update_interval = 0.5  # Seconds entre updates (amélioré pour plus de réactivité)
+        self.update_interval = 1.0  # Augmenté à 1 seconde entre updates pour réduire CPU
         self.setup_ui()
 
         # MODIFICATION : Ne pas démarrer le timer immédiatement
@@ -566,8 +552,8 @@ class TransferStatsWidget(QWidget):
         QTimer.singleShot(1000, self.start_updates)  # Démarrer après 1 seconde
 
     def start_updates(self) -> None:
-        """Démarre les mises à jour automatiques"""
-        self.update_timer.start(1000)  # Mise à jour toutes les 1 secondes (améliorer la réactivité)
+        """Démarre les mises à jour automatiques (optimisé pour les performances)"""
+        self.update_timer.start(2000)  # Réduit à 2 secondes pour réduire la charge CPU
         self.update_stats()  # Première mise à jour immédiate
 
     def setup_ui(self) -> None:

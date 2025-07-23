@@ -828,8 +828,9 @@ class DriveExplorerMainWindow(QMainWindow):
                                if os.path.isdir(os.path.join(self.local_model.current_path, name)))
 
             if folder_count > 0:
-                # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 30
+                # Optimisé pour de gros volumes: moins de parallélisme par dossier
+                # mais permet plusieurs dossiers simultanés
+                upload_mode = 5  # Réduit de 30 à 5 pour éviter la surcharge
                 if upload_mode is None:
                     return  # Annulé
             else:
@@ -1669,8 +1670,9 @@ class DriveExplorerMainWindow(QMainWindow):
             folder_count = sum(1 for path in file_paths if os.path.isdir(path))
 
             if folder_count > 0:
-                # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 30
+                # Optimisé pour de gros volumes: moins de parallélisme par dossier  
+                # mais permet plusieurs dossiers simultanés
+                upload_mode = 5  # Réduit de 30 à 5 pour éviter la surcharge
                 if upload_mode is None:
                     return  # Annulé
             else:
