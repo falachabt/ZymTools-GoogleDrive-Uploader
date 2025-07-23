@@ -232,7 +232,7 @@ class SafeFolderUploadThread(QThread):
         self.parent_id = parent_id
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
-        # Limiter à un maximum sécurisé25
+        # Limiter à un maximum sécurisé
         self.max_parallel_uploads = max(max_parallel_uploads, 10 )
         self.total_files = 0
         self.uploaded_files = 0
