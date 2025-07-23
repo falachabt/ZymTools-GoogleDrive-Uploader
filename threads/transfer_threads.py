@@ -23,7 +23,7 @@ class SafeGoogleDriveUploader:
     _last_upload_time = 0
     _upload_count = 0
     _rate_limit_window = 3  # 1 minute
-    _max_uploads_per_window = 700  # Maximum 100 uploads par minute
+    _max_uploads_per_window = 1700  # Maximum 100 uploads par minute
 
     @staticmethod
     def get_fresh_client():
@@ -233,7 +233,7 @@ class SafeFolderUploadThread(QThread):
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
         # Limiter à un maximum sécurisé
-        self.max_parallel_uploads = max(max_parallel_uploads, 10 )
+        self.max_parallel_uploads = max(max_parallel_uploads, 30 )
         self.total_files = 0
         self.uploaded_files = 0
         self.failed_files = 0
