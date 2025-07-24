@@ -247,7 +247,7 @@ class TransferManager(QObject):
         
         # Throttling pour les signaux UI
         self._last_update_time = {}  # Par transfer_id
-        self._update_interval = 0.1  # Réduit à 0.1s pour des mises à jour plus fréquentes des statistiques de dossier
+        self._update_interval = 0.05  # Réduit à 0.05s pour des mises à jour très fréquentes des statistiques de dossier
 
     def generate_transfer_id(self) -> str:
         """Génère un ID unique pour un transfert"""
@@ -449,8 +449,15 @@ class TransferManager(QObject):
             if file_path in transfer.child_files:
                 transfer.child_files[file_path].speed = speed
             
-            # Mettre à jour le progrès global du transfert
+            # CHANGEMENT: Approche simplifiée pour le statut du dossier
             if transfer.is_folder_transfer:
+                # Dès qu'un fichier commence, le dossier passe en cours
+                if status == TransferStatus.IN_PROGRESS and transfer.status == TransferStatus.PENDING:
+                    transfer.status = TransferStatus.IN_PROGRESS
+                    transfer.start_time = datetime.now()
+                    print(f"DEBUG: Dossier {transfer.file_name} passé en IN_PROGRESS")
+                
+                # Mettre à jour le progrès global du transfert
                 overall_progress = transfer.get_overall_progress()
                 transfer.progress = overall_progress
                 
@@ -460,7 +467,7 @@ class TransferManager(QObject):
                 in_progress_count = sum(1 for f in transfer.child_files.values() if f.status == TransferStatus.IN_PROGRESS)
                 total_count = len(transfer.child_files)
                 
-                # Mettre à jour le statut du dossier selon l'état des fichiers
+                # Vérifier si tous les fichiers sont traités
                 if completed_count + failed_count == total_count and total_count > 0:
                     # Tous les fichiers sont traités
                     if failed_count == 0:
@@ -476,13 +483,13 @@ class TransferManager(QObject):
                         transfer.error_message = "Tous les fichiers ont échoué"
                     
                     transfer.end_time = datetime.now()
-                elif in_progress_count > 0 or completed_count > 0:
-                    # Au moins un fichier en cours ou terminé - le dossier est en cours
-                    if transfer.status == TransferStatus.PENDING:
-                        transfer.status = TransferStatus.IN_PROGRESS
-                        transfer.start_time = datetime.now()
+                    print(f"DEBUG: Dossier {transfer.file_name} terminé avec statut {transfer.status.value}")
             
-            self._emit_transfer_updated_throttled(transfer_id)
+            # Toujours émettre immédiatement pour les changements de statut importants
+            if status == TransferStatus.IN_PROGRESS or transfer.status in [TransferStatus.COMPLETED, TransferStatus.ERROR]:
+                self.transfer_updated.emit(transfer_id)
+            else:
+                self._emit_transfer_updated_throttled(transfer_id)
     
     def _emit_transfer_updated_throttled(self, transfer_id: str) -> None:
         """Émet le signal transfer_updated avec throttling pour éviter la surcharge UI"""
@@ -564,7 +571,7 @@ class TransferListModel(QStandardItemModel):
         # Timer pour rafraîchir les statistiques de dossier
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_folder_statistics)
-        self.refresh_timer.start(500)  # Rafraîchir toutes les 0.5 secondes pour de meilleures mises à jour
+        self.refresh_timer.start(200)  # Rafraîchir toutes les 0.2 secondes pour des mises à jour plus réactives
 
     def on_transfer_added(self, transfer_id: str) -> None:
         """Appelé quand un transfert est ajouté"""
@@ -576,7 +583,11 @@ class TransferListModel(QStandardItemModel):
         """Appelé quand un transfert est mis à jour"""
         transfer = self.transfer_manager.get_transfer(transfer_id)
         if transfer:
-            self.update_transfer_row(transfer)
+            # Pour les dossiers, forcer une mise à jour immédiate des statistiques
+            if transfer.is_folder_transfer:
+                self._update_folder_statistics_display(transfer)
+            else:
+                self.update_transfer_row(transfer)
 
     def on_transfer_removed(self, transfer_id: str) -> None:
         """Appelé quand un transfert est supprimé"""
@@ -776,12 +787,27 @@ class TransferListModel(QStandardItemModel):
             
             for transfer_id, transfer in active_transfers.items():
                 if transfer.is_folder_transfer and transfer.child_files:
+                    # Vérifier si le dossier devrait être en cours
+                    in_progress_files = [f for f in transfer.child_files.values() 
+                                       if f.status == TransferStatus.IN_PROGRESS]
+                    completed_files = [f for f in transfer.child_files.values() 
+                                     if f.status == TransferStatus.COMPLETED]
+                    
+                    # Si des fichiers sont en cours ou terminés et le dossier est toujours en attente
+                    if (in_progress_files or completed_files) and transfer.status == TransferStatus.PENDING:
+                        transfer.status = TransferStatus.IN_PROGRESS
+                        if not transfer.start_time:
+                            transfer.start_time = datetime.now()
+                        print(f"DEBUG: Dossier {transfer.file_name} forcé en IN_PROGRESS par refresh")
+                    
                     # Mettre à jour seulement les statistiques sans émettre de signal
                     self._update_folder_statistics_display(transfer)
                     
         except Exception as e:
             # Ne pas faire planter l'application pour une erreur de rafraîchissement
             print(f"Erreur lors du rafraîchissement des statistiques de dossier: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _update_folder_statistics_display(self, transfer: TransferItem) -> None:
         """Met à jour l'affichage des statistiques d'un dossier spécifique"""
@@ -789,16 +815,20 @@ class TransferListModel(QStandardItemModel):
         for row in range(self.rowCount()):
             item = self.item(row, 0)
             if item and item.data() == transfer.transfer_id:
+                # Debug: Afficher les statistiques calculées
+                overall_progress = transfer.get_overall_progress()
+                completed = transfer.get_completed_files_count()
+                failed = transfer.get_failed_files_count()
+                total = len(transfer.child_files)
+                speed_text = transfer.get_speed_text()
+                eta_text = transfer.get_eta_text()
+                
                 # Mettre à jour le statut (colonne 2)
                 status_item = self.item(row, 2)
                 if status_item:
                     status_item.setText(transfer.status.value)
                 
                 # Progrès avec informations détaillées (colonne 3)
-                overall_progress = transfer.get_overall_progress()
-                completed = transfer.get_completed_files_count()
-                failed = transfer.get_failed_files_count()
-                total = len(transfer.child_files)
                 progress_text = f"{overall_progress}% ({completed + failed}/{total})"
                 if failed > 0:
                     progress_text += f" - {failed} erreur(s)"
@@ -811,11 +841,16 @@ class TransferListModel(QStandardItemModel):
                 # Vitesse (colonne 4)
                 speed_item = self.item(row, 4)  
                 if speed_item:
-                    speed_item.setText(transfer.get_speed_text())
+                    speed_item.setText(speed_text)
                 
                 # ETA (colonne 5)
                 eta_item = self.item(row, 5)
                 if eta_item:
-                    eta_item.setText(transfer.get_eta_text())
+                    eta_item.setText(eta_text)
+                
+                # Debug pour les dossiers qui devraient être actifs
+                if transfer.child_files and any(f.status in [TransferStatus.IN_PROGRESS, TransferStatus.COMPLETED] for f in transfer.child_files.values()):
+                    if transfer.status == TransferStatus.PENDING:
+                        print(f"WARNING: Dossier {transfer.file_name} reste en PENDING malgré fichiers actifs!")
                 
                 break
