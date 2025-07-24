@@ -735,7 +735,22 @@ class TransferPanel(QWidget):
         # Bouton pour réduire/agrandir
         self.toggle_button = QPushButton("🔽")
         self.toggle_button.setFixedSize(25, 25)
-        self.toggle_button.clicked.connect(self.toggle_panel)
+        
+        # Connecter le signal avec vérification
+        try:
+            print("🔧 Tentative de connexion du toggle_button...")
+            # Vérifier que la méthode existe
+            if hasattr(self, 'toggle_panel'):
+                print("✅ Méthode toggle_panel trouvée")
+                self.toggle_button.clicked.connect(self.toggle_panel)
+                print("✅ Signal connecté avec succès")
+            else:
+                print("❌ Méthode toggle_panel introuvable")
+        except Exception as e:
+            print(f"❌ Erreur lors de la connexion du toggle_button: {e}")
+            import traceback
+            traceback.print_exc()
+            
         title_layout.addWidget(self.toggle_button)
 
         layout.addLayout(title_layout)
@@ -872,9 +887,24 @@ class TransferPanel(QWidget):
 
     def toggle_panel(self) -> None:
         """Bascule l'affichage du panneau (réduit/étendu)"""
-        self.is_collapsed = not self.is_collapsed
-        self.main_content.setVisible(not self.is_collapsed)
-        self.toggle_button.setText("🔼" if self.is_collapsed else "🔽")
+        try:
+            # Vérifier que les attributs nécessaires existent
+            if not hasattr(self, 'is_collapsed'):
+                self.is_collapsed = False
+            if not hasattr(self, 'main_content'):
+                print("❌ Erreur: main_content n'existe pas")
+                return
+            if not hasattr(self, 'toggle_button'):
+                print("❌ Erreur: toggle_button n'existe pas")
+                return
+                
+            self.is_collapsed = not self.is_collapsed
+            self.main_content.setVisible(not self.is_collapsed)
+            self.toggle_button.setText("🔼" if self.is_collapsed else "🔽")
+        except Exception as e:
+            print(f"❌ Erreur dans toggle_panel: {e}")
+            import traceback
+            traceback.print_exc()
 
     def pause_selected_transfer(self) -> None:
         """Suspend le transfert sélectionné"""
