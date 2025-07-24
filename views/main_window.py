@@ -60,6 +60,10 @@ class DriveExplorerMainWindow(QMainWindow):
 
     def setup_core_components(self) -> None:
         """Initialise les composants principaux"""
+        # Initialize configuration attributes
+        self.SAFE_MODE = True  # Default to safe mode
+        self.MAX_PARALLEL_UPLOADS = 1 if self.SAFE_MODE else 2
+        
         # Gestionnaire de cache
         self.cache_manager = CacheManager(max_age_minutes=10)
 
@@ -73,15 +77,8 @@ class DriveExplorerMainWindow(QMainWindow):
         self.connected = False
         self.connect_to_drive()
 
-        # NEW: Unified Upload Manager
+        # NEW: Unified Upload Manager (initialized in connect_to_drive)
         self.upload_manager = None
-        if self.connected:
-            self.upload_manager = UnifiedUploadManager(
-                drive_client=self.drive_client,
-                num_workers=3,  # 3 workers
-                files_per_worker=10  # 10 files per worker = 30 total parallel uploads
-            )
-            self._connect_upload_manager_signals()
 
         # Threads de chargement
         self.local_load_thread = None
@@ -145,9 +142,22 @@ class DriveExplorerMainWindow(QMainWindow):
         self.explorer_tab = self.create_explorer_tab()
         self.tab_widget.addTab(self.explorer_tab, "📂 Explorateur")
 
-        # Onglet 2: Gestionnaire de transferts (nouvelle architecture)
-        self.transfer_panel = UnifiedTransferView(self.upload_manager)
-        self.tab_widget.addTab(self.transfer_panel, "📋 Transferts")
+        # Onglet 2: Gestionnaire de transferts (nouvelle architecture)  
+        try:
+            self.transfer_panel = UnifiedTransferView(self.upload_manager)
+            self.tab_widget.addTab(self.transfer_panel, "📋 Transferts")
+            print("✅ Transfer panel created successfully")
+        except Exception as e:
+            print(f"❌ Error creating transfer panel: {e}")
+            # Create a fallback widget
+            fallback_widget = QWidget()
+            fallback_layout = QVBoxLayout(fallback_widget)
+            error_label = QLabel(f"Erreur lors de la création du panneau de transfert:\n{str(e)}")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setStyleSheet("color: red; padding: 20px;")
+            fallback_layout.addWidget(error_label)
+            self.tab_widget.addTab(fallback_widget, "📋 Transferts (Erreur)")
+            self.transfer_panel = None
 
         # Connecter le signal de changement d'onglet
         self.tab_widget.currentChanged.connect(self.on_tab_changed)

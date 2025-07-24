@@ -36,25 +36,42 @@ class UnifiedTransferView(QWidget):
         Initialize transfer view
         
         Args:
-            upload_manager: The unified upload manager
+            upload_manager: The unified upload manager (can be None if connection failed)
         """
         super().__init__()
         
+        # Handle case where upload_manager is None
         self.upload_manager = upload_manager
-        self.upload_queue = upload_manager.upload_queue if upload_manager else None
+        self.upload_queue = None
         
-        # Update timers
+        if upload_manager and hasattr(upload_manager, 'upload_queue'):
+            self.upload_queue = upload_manager.upload_queue
+        
+        # Update timers with safety checks
         self._update_timer = QTimer()
-        self._update_timer.timeout.connect(self._update_displays)
+        self._update_timer.timeout.connect(self._safe_update_displays)
         self._update_timer.start(1000)  # Update every second
         
         # Data tracking
         self._last_file_count = 0
         self._last_stats = {}
         
-        self._setup_ui()
-        self._connect_signals()
-        self._update_displays()
+        try:
+            self._setup_ui()
+            self._connect_signals()
+            self._safe_update_displays()
+        except Exception as e:
+            print(f"❌ Error initializing UnifiedTransferView: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _safe_update_displays(self):
+        """Safely update displays with error handling"""
+        try:
+            self._update_displays()
+        except Exception as e:
+            print(f"❌ Error updating transfer displays: {e}")
+            # Don't crash, just log the error
     
     def _setup_ui(self):
         """Set up the user interface"""
@@ -234,14 +251,19 @@ class UnifiedTransferView(QWidget):
     def _connect_signals(self):
         """Connect upload manager signals"""
         if not self.upload_queue:
+            print("⚠️ No upload queue available - signals not connected")
             return
         
-        # Connect queue signals
-        self.upload_queue.file_added.connect(self._on_file_added)
-        self.upload_queue.file_updated.connect(self._on_file_updated)
-        self.upload_queue.folder_added.connect(self._on_folder_added)
-        self.upload_queue.folder_updated.connect(self._on_folder_updated)
-        self.upload_queue.queue_statistics_changed.connect(self._on_statistics_changed)
+        try:
+            # Connect queue signals
+            self.upload_queue.file_added.connect(self._on_file_added)
+            self.upload_queue.file_updated.connect(self._on_file_updated)
+            self.upload_queue.folder_added.connect(self._on_folder_added)
+            self.upload_queue.folder_updated.connect(self._on_folder_updated)
+            self.upload_queue.queue_statistics_changed.connect(self._on_statistics_changed)
+            print("✅ Upload queue signals connected successfully")
+        except Exception as e:
+            print(f"❌ Error connecting signals: {e}")
     
     def _update_displays(self):
         """Update all display elements"""
@@ -256,63 +278,82 @@ class UnifiedTransferView(QWidget):
     def _update_statistics(self):
         """Update overall statistics display"""
         if not self.upload_manager:
+            # Set default values if no upload manager
+            self.overall_progress.setValue(0)
+            self.overall_progress.setFormat("0%")
+            self.stats_label.setText("Aucun gestionnaire d'upload")
+            self.speed_label.setText("0 B/s")
+            self.workers_label.setText("0/0 workers (0 actifs)")
+            self.pause_resume_btn.setText("🚀 Démarrer")
             return
         
-        stats = self.upload_manager.get_queue_statistics()
-        
-        # Progress bar
-        progress = stats.get('progress_percentage', 0)
-        self.overall_progress.setValue(progress)
-        self.overall_progress.setFormat(f"{progress}%")
-        
-        # Statistics label
-        total_files = stats.get('total_files', 0)
-        total_size = stats.get('total_size', 0)
-        completed = stats.get('completed', 0)
-        failed = stats.get('failed', 0)
-        
-        stats_text = f"{total_files} fichiers | {format_file_size(total_size)}"
-        if completed > 0 or failed > 0:
-            stats_text += f" | ✅{completed} ❌{failed}"
-        
-        self.stats_label.setText(stats_text)
-        
-        # Speed label
-        speed = stats.get('active_speed', 0)
-        self.speed_label.setText(f"{format_file_size(int(speed))}/s")
-        
-        # Workers label
-        workers_info = stats.get('workers', {})
-        total_workers = workers_info.get('total_workers', 0)
-        running_workers = workers_info.get('running_workers', 0)
-        active_files = workers_info.get('total_active_files', 0)
-        
-        self.workers_label.setText(f"{running_workers}/{total_workers} workers ({active_files} actifs)")
-        
-        # Update pause/resume button
-        if self.upload_manager.is_paused():
-            self.pause_resume_btn.setText("▶️ Reprendre")
-        elif self.upload_manager.is_active():
-            self.pause_resume_btn.setText("⏸️ Pause")
-        else:
-            self.pause_resume_btn.setText("🚀 Démarrer")
+        try:
+            stats = self.upload_manager.get_queue_statistics()
+            
+            # Progress bar
+            progress = stats.get('progress_percentage', 0)
+            self.overall_progress.setValue(progress)
+            self.overall_progress.setFormat(f"{progress}%")
+            
+            # Statistics label
+            total_files = stats.get('total_files', 0)
+            total_size = stats.get('total_size', 0)
+            completed = stats.get('completed', 0)
+            failed = stats.get('failed', 0)
+            
+            stats_text = f"{total_files} fichiers | {format_file_size(total_size)}"
+            if completed > 0 or failed > 0:
+                stats_text += f" | ✅{completed} ❌{failed}"
+            
+            self.stats_label.setText(stats_text)
+            
+            # Speed label
+            speed = stats.get('active_speed', 0)
+            self.speed_label.setText(f"{format_file_size(int(speed))}/s")
+            
+            # Workers label
+            workers_info = stats.get('workers', {})
+            total_workers = workers_info.get('total_workers', 0)
+            running_workers = workers_info.get('running_workers', 0)
+            active_files = workers_info.get('total_active_files', 0)
+            
+            self.workers_label.setText(f"{running_workers}/{total_workers} workers ({active_files} actifs)")
+            
+            # Update pause/resume button
+            if hasattr(self.upload_manager, 'is_paused') and self.upload_manager.is_paused():
+                self.pause_resume_btn.setText("▶️ Reprendre")
+            elif hasattr(self.upload_manager, 'is_active') and self.upload_manager.is_active():
+                self.pause_resume_btn.setText("⏸️ Pause")
+            else:
+                self.pause_resume_btn.setText("🚀 Démarrer")
+                
+        except Exception as e:
+            print(f"❌ Error updating statistics: {e}")
+            # Set safe defaults
+            self.overall_progress.setValue(0)
+            self.stats_label.setText("Erreur de mise à jour")
+            self.speed_label.setText("0 B/s")
     
     def _update_folder_view(self):
         """Update folder tree view"""
-        if not self.upload_queue:
+        if not self.upload_queue or not self.upload_manager:
             return
         
-        # Clear existing items
-        self.folder_model.clear()
-        self.folder_model.setHorizontalHeaderLabels([
-            "Dossier", "Statut", "Progrès", "Fichiers", "Vitesse", "ETA", "Taille"
-        ])
-        
-        # Get all folders
-        folders = self.upload_manager.get_all_folders()
-        
-        for folder in folders:
-            self._add_folder_to_tree(folder)
+        try:
+            # Clear existing items
+            self.folder_model.clear()
+            self.folder_model.setHorizontalHeaderLabels([
+                "Dossier", "Statut", "Progrès", "Fichiers", "Vitesse", "ETA", "Taille"
+            ])
+            
+            # Get all folders
+            if hasattr(self.upload_manager, 'get_all_folders'):
+                folders = self.upload_manager.get_all_folders()
+                
+                for folder in folders:
+                    self._add_folder_to_tree(folder)
+        except Exception as e:
+            print(f"❌ Error updating folder view: {e}")
     
     def _add_folder_to_tree(self, folder_info: FolderInfo):
         """Add a folder to the tree view"""
@@ -385,28 +426,33 @@ class UnifiedTransferView(QWidget):
     
     def _update_files_view(self):
         """Update all files view"""
-        if not self.upload_queue:
+        if not self.upload_queue or not self.upload_manager:
             return
         
-        # Get current filter
-        current_filter = getattr(self, '_current_filter', None)
-        
-        # Get files based on filter
-        if current_filter is None:
-            files = self.upload_manager.get_all_files()
-        else:
-            files = self.upload_manager.get_files_by_status(current_filter)
-        
-        # Limit display to prevent UI lag
-        max_display = 1000
-        if len(files) > max_display:
-            files = files[:max_display]
-        
-        # Update table
-        self.files_table.setRowCount(len(files))
-        
-        for row, file in enumerate(files):
-            self._update_file_row(row, file)
+        try:
+            # Get current filter
+            current_filter = getattr(self, '_current_filter', None)
+            
+            # Get files based on filter
+            if current_filter is None and hasattr(self.upload_manager, 'get_all_files'):
+                files = self.upload_manager.get_all_files()
+            elif hasattr(self.upload_manager, 'get_files_by_status'):
+                files = self.upload_manager.get_files_by_status(current_filter)
+            else:
+                files = []
+            
+            # Limit display to prevent UI lag
+            max_display = 1000
+            if len(files) > max_display:
+                files = files[:max_display]
+            
+            # Update table
+            self.files_table.setRowCount(len(files))
+            
+            for row, file in enumerate(files):
+                self._update_file_row(row, file)
+        except Exception as e:
+            print(f"❌ Error updating files view: {e}")
     
     def _update_file_row(self, row: int, file: QueuedFile):
         """Update a single file row in the table"""
@@ -456,43 +502,49 @@ class UnifiedTransferView(QWidget):
     
     def _update_error_view(self):
         """Update error files view"""
-        if not self.upload_queue:
+        if not self.upload_queue or not self.upload_manager:
             return
         
-        # Get failed files
-        failed_files = self.upload_manager.get_files_by_status(FileStatus.ERROR)
-        
-        # Show/hide error panel
-        self.error_group.setVisible(len(failed_files) > 0)
-        
-        if not failed_files:
-            return
-        
-        # Update error table
-        self.error_table.setRowCount(len(failed_files))
-        
-        for row, file in enumerate(failed_files):
-            # File name
-            name_item = QTableWidgetItem(file.file_name)
-            name_item.setData(Qt.UserRole, file.unique_id)
-            self.error_table.setItem(row, 0, name_item)
+        try:
+            # Get failed files
+            if hasattr(self.upload_manager, 'get_files_by_status'):
+                failed_files = self.upload_manager.get_files_by_status(FileStatus.ERROR)
+            else:
+                failed_files = []
             
-            # Folder
-            folder_name = os.path.basename(file.source_folder)
-            if file.relative_path:
-                folder_name += f"/{file.relative_path}"
+            # Show/hide error panel
+            self.error_group.setVisible(len(failed_files) > 0)
             
-            folder_item = QTableWidgetItem(folder_name)
-            self.error_table.setItem(row, 1, folder_item)
+            if not failed_files:
+                return
             
-            # Error message
-            error_item = QTableWidgetItem(file.error_message[:100] + "..." if len(file.error_message) > 100 else file.error_message)
-            error_item.setToolTip(file.error_message)  # Full error on hover
-            self.error_table.setItem(row, 2, error_item)
+            # Update error table
+            self.error_table.setRowCount(len(failed_files))
             
-            # Retry count
-            retry_item = QTableWidgetItem(str(file.retry_count))
-            self.error_table.setItem(row, 3, retry_item)
+            for row, file in enumerate(failed_files):
+                # File name
+                name_item = QTableWidgetItem(file.file_name)
+                name_item.setData(Qt.UserRole, file.unique_id)
+                self.error_table.setItem(row, 0, name_item)
+            
+                # Folder
+                folder_name = os.path.basename(file.source_folder)
+                if file.relative_path:
+                    folder_name += f"/{file.relative_path}"
+                
+                folder_item = QTableWidgetItem(folder_name)
+                self.error_table.setItem(row, 1, folder_item)
+                
+                # Error message
+                error_item = QTableWidgetItem(file.error_message[:100] + "..." if len(file.error_message) > 100 else file.error_message)
+                error_item.setToolTip(file.error_message)  # Full error on hover
+                self.error_table.setItem(row, 2, error_item)
+                
+                # Retry count
+                retry_item = QTableWidgetItem(str(file.retry_count))
+                self.error_table.setItem(row, 3, retry_item)
+        except Exception as e:
+            print(f"❌ Error updating error view: {e}")
     
     def _filter_files(self, status: Optional[FileStatus]):
         """Filter files by status"""
