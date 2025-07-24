@@ -247,7 +247,7 @@ class TransferManager(QObject):
         
         # Throttling pour les signaux UI
         self._last_update_time = {}  # Par transfer_id
-        self._update_interval = 0.2  # Réduit à 0.2s pour de meilleures mises à jour des statistiques de dossier
+        self._update_interval = 0.1  # Réduit à 0.1s pour des mises à jour plus fréquentes des statistiques de dossier
 
     def generate_transfer_id(self) -> str:
         """Génère un ID unique pour un transfert"""
@@ -457,8 +457,10 @@ class TransferManager(QObject):
                 # Déterminer le statut global basé sur les fichiers
                 failed_count = transfer.get_failed_files_count()
                 completed_count = transfer.get_completed_files_count()
+                in_progress_count = sum(1 for f in transfer.child_files.values() if f.status == TransferStatus.IN_PROGRESS)
                 total_count = len(transfer.child_files)
                 
+                # Mettre à jour le statut du dossier selon l'état des fichiers
                 if completed_count + failed_count == total_count and total_count > 0:
                     # Tous les fichiers sont traités
                     if failed_count == 0:
@@ -474,6 +476,11 @@ class TransferManager(QObject):
                         transfer.error_message = "Tous les fichiers ont échoué"
                     
                     transfer.end_time = datetime.now()
+                elif in_progress_count > 0 or completed_count > 0:
+                    # Au moins un fichier en cours ou terminé - le dossier est en cours
+                    if transfer.status == TransferStatus.PENDING:
+                        transfer.status = TransferStatus.IN_PROGRESS
+                        transfer.start_time = datetime.now()
             
             self._emit_transfer_updated_throttled(transfer_id)
     
@@ -557,7 +564,7 @@ class TransferListModel(QStandardItemModel):
         # Timer pour rafraîchir les statistiques de dossier
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_folder_statistics)
-        self.refresh_timer.start(1000)  # Rafraîchir toutes les secondes
+        self.refresh_timer.start(500)  # Rafraîchir toutes les 0.5 secondes pour de meilleures mises à jour
 
     def on_transfer_added(self, transfer_id: str) -> None:
         """Appelé quand un transfert est ajouté"""
@@ -782,9 +789,12 @@ class TransferListModel(QStandardItemModel):
         for row in range(self.rowCount()):
             item = self.item(row, 0)
             if item and item.data() == transfer.transfer_id:
-                # Mettre à jour seulement les colonnes statistiques (Progrès, Vitesse, ETA)
+                # Mettre à jour le statut (colonne 2)
+                status_item = self.item(row, 2)
+                if status_item:
+                    status_item.setText(transfer.status.value)
                 
-                # Progrès avec informations détaillées
+                # Progrès avec informations détaillées (colonne 3)
                 overall_progress = transfer.get_overall_progress()
                 completed = transfer.get_completed_files_count()
                 failed = transfer.get_failed_files_count()
@@ -798,10 +808,12 @@ class TransferListModel(QStandardItemModel):
                 if progress_item:
                     progress_item.setText(progress_text)
                 
+                # Vitesse (colonne 4)
                 speed_item = self.item(row, 4)  
                 if speed_item:
                     speed_item.setText(transfer.get_speed_text())
                 
+                # ETA (colonne 5)
                 eta_item = self.item(row, 5)
                 if eta_item:
                     eta_item.setText(transfer.get_eta_text())
