@@ -6,7 +6,7 @@ import os
 from typing import List, Optional, Dict, Any
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 
-from models.upload_queue import UploadQueue, QueuedFile, FileStatus, FolderInfo
+from models.upload_queue import UploadQueue, QueuedFile, FileStatus, FolderInfo, QueueOrdering
 from threads.queue_workers import WorkerManager
 from threads.folder_scanner import FolderScanner, BatchFolderScanner
 from core.google_drive_client import GoogleDriveClient
@@ -441,6 +441,9 @@ class UnifiedUploadManager(QObject):
         
         # Mark folder scanning as completed
         self.upload_queue.mark_folder_scan_completed(folder_path)
+        
+        # Reorder queue to enable concurrent folder uploads
+        self.upload_queue.auto_reorder_on_folder_complete(QueueOrdering.ROUND_ROBIN)
     
     def _on_scanning_error(self, folder_path: str, error_message: str):
         """Handle scanning error"""
@@ -467,6 +470,9 @@ class UnifiedUploadManager(QObject):
         
         # Mark folder scanning as completed
         self.upload_queue.mark_folder_scan_completed(folder_path)
+        
+        # Reorder queue to enable concurrent folder uploads
+        self.upload_queue.auto_reorder_on_folder_complete(QueueOrdering.ROUND_ROBIN)
     
     def _on_folder_scanning_error(self, folder_index: int, folder_path: str, error: str):
         """Handle individual folder in batch error"""

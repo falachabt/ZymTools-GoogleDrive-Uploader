@@ -442,12 +442,13 @@ class UploadConfigDialog(QDialog):
         info_layout = QFormLayout()
 
         self.total_parallel_label = QLabel()
-        self._update_total_parallel()
         info_layout.addRow("Total uploads parallèles:", self.total_parallel_label)
 
         self.recommendation_label = QLabel()
-        self._update_recommendation()
         info_layout.addRow("Recommandation:", self.recommendation_label)
+        
+        # Update labels after both are created
+        self._update_total_parallel()
 
         info_group.setLayout(info_layout)
         layout.addWidget(info_group)

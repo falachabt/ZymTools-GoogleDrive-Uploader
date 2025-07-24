@@ -6,6 +6,7 @@ Implements a single queue-based approach for all uploads
 import os
 import queue
 import threading
+import random
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Set, Any
@@ -21,6 +22,16 @@ class FileStatus(Enum):
     ERROR = "❌ Erreur"
     CANCELLED = "🚫 Annulé"
     SKIPPED = "⏭️ Ignoré (existe)"
+
+
+class QueueOrdering(Enum):
+    """Queue ordering strategies"""
+    FIFO = "fifo"  # First In, First Out (default)
+    RANDOM = "random"  # Random order
+    SIZE_ASC = "size_asc"  # Small files first
+    SIZE_DESC = "size_desc"  # Large files first  
+    ALPHABETICAL = "alphabetical"  # Alphabetical by filename
+    ROUND_ROBIN = "round_robin"  # Alternate between folders
 
 
 @dataclass
@@ -596,3 +607,94 @@ class UploadQueue(QObject):
         """Get number of pending files"""
         with self._lock:
             return sum(1 for f in self._files.values() if f.status == FileStatus.PENDING)
+    
+    def reorder_queue(self, ordering: QueueOrdering = QueueOrdering.RANDOM) -> int:
+        """
+        Reorder the pending files in the queue according to the specified strategy.
+        This enables concurrent folder uploads by interleaving files from different folders.
+        
+        Args:
+            ordering: The ordering strategy to apply
+            
+        Returns:
+            Number of pending files that were reordered
+        """
+        with self._lock:
+            # Get all pending files
+            pending_files = [f for f in self._files.values() if f.status == FileStatus.PENDING]
+            
+            if len(pending_files) == 0:
+                return 0
+            
+            # Clear current pending queue
+            while not self._pending_queue.empty():
+                try:
+                    self._pending_queue.get_nowait()
+                except queue.Empty:
+                    break
+            
+            # Apply ordering strategy
+            if ordering == QueueOrdering.RANDOM:
+                random.shuffle(pending_files)
+            elif ordering == QueueOrdering.SIZE_ASC:
+                pending_files.sort(key=lambda f: f.file_size)
+            elif ordering == QueueOrdering.SIZE_DESC:
+                pending_files.sort(key=lambda f: f.file_size, reverse=True)
+            elif ordering == QueueOrdering.ALPHABETICAL:
+                pending_files.sort(key=lambda f: f.file_name.lower())
+            elif ordering == QueueOrdering.ROUND_ROBIN:
+                pending_files = self._round_robin_sort(pending_files)
+            # FIFO is default - no reordering needed
+            
+            # Add reordered files back to queue
+            for file in pending_files:
+                self._pending_queue.put(file.unique_id)
+            
+            return len(pending_files)
+    
+    def _round_robin_sort(self, files: List[QueuedFile]) -> List[QueuedFile]:
+        """
+        Sort files using round-robin strategy to interleave files from different folders
+        
+        Args:
+            files: List of files to sort
+            
+        Returns:
+            List of files sorted in round-robin fashion by source folder
+        """
+        # Group files by source folder
+        folder_groups = {}
+        for file in files:
+            folder = file.source_folder
+            if folder not in folder_groups:
+                folder_groups[folder] = []
+            folder_groups[folder].append(file)
+        
+        # Round-robin through folders
+        result = []
+        folder_iterators = {folder: iter(files) for folder, files in folder_groups.items()}
+        folders = list(folder_iterators.keys())
+        
+        while folder_iterators:
+            for folder in folders[:]:  # Copy list to avoid modification during iteration
+                try:
+                    file = next(folder_iterators[folder])
+                    result.append(file)
+                except StopIteration:
+                    # This folder is exhausted, remove it
+                    del folder_iterators[folder]
+                    folders.remove(folder)
+        
+        return result
+    
+    def auto_reorder_on_folder_complete(self, ordering: QueueOrdering = QueueOrdering.ROUND_ROBIN):
+        """
+        Automatically reorder queue when a new folder's files are added.
+        This ensures concurrent folder uploads.
+        
+        Args:
+            ordering: The ordering strategy to apply
+        """
+        pending_count = self.reorder_queue(ordering)
+        if pending_count > 0:
+            print(f"🔄 Queue reordered: {pending_count} pending files using {ordering.value} strategy")
