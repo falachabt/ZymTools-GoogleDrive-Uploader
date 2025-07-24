@@ -34,6 +34,11 @@ class SearchDialog(QDialog):
         # Formulaire de recherche
         form_layout = QFormLayout()
 
+        self.recommendation_label = QLabel()
+        self.recommendation_label.setText("")  # Texte initial vide ou message par défaut
+        layout.addWidget(self.recommendation_label)
+
+
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Entrez votre recherche...")
         self.search_edit.returnPressed.connect(self.accept)
@@ -41,11 +46,15 @@ class SearchDialog(QDialog):
 
         layout.addLayout(form_layout)
 
+
+
         # Boutons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+
 
         self.setLayout(layout)
         self.search_edit.setFocus()
