@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Any, Optional, List
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 from PyQt5.QtCore import Qt
 
@@ -247,7 +247,7 @@ class TransferManager(QObject):
         
         # Throttling pour les signaux UI
         self._last_update_time = {}  # Par transfer_id
-        self._update_interval = 0.5  # Secondes entre updates UI
+        self._update_interval = 0.2  # Réduit à 0.2s pour de meilleures mises à jour des statistiques de dossier
 
     def generate_transfer_id(self) -> str:
         """Génère un ID unique pour un transfert"""
@@ -553,6 +553,11 @@ class TransferListModel(QStandardItemModel):
         self.transfer_manager.transfer_added.connect(self.on_transfer_added)
         self.transfer_manager.transfer_updated.connect(self.on_transfer_updated)
         self.transfer_manager.transfer_removed.connect(self.on_transfer_removed)
+        
+        # Timer pour rafraîchir les statistiques de dossier
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self.refresh_folder_statistics)
+        self.refresh_timer.start(1000)  # Rafraîchir toutes les secondes
 
     def on_transfer_added(self, transfer_id: str) -> None:
         """Appelé quand un transfert est ajouté"""
@@ -755,3 +760,50 @@ class TransferListModel(QStandardItemModel):
         if item:
             return item.data()
         return None
+
+    def refresh_folder_statistics(self) -> None:
+        """Rafraîchit les statistiques des dossiers en cours de transfert"""
+        try:
+            # Parcourir tous les transferts actifs et mettre à jour leurs statistiques
+            active_transfers = self.transfer_manager.get_active_transfers()
+            
+            for transfer_id, transfer in active_transfers.items():
+                if transfer.is_folder_transfer and transfer.child_files:
+                    # Mettre à jour seulement les statistiques sans émettre de signal
+                    self._update_folder_statistics_display(transfer)
+                    
+        except Exception as e:
+            # Ne pas faire planter l'application pour une erreur de rafraîchissement
+            print(f"Erreur lors du rafraîchissement des statistiques de dossier: {e}")
+
+    def _update_folder_statistics_display(self, transfer: TransferItem) -> None:
+        """Met à jour l'affichage des statistiques d'un dossier spécifique"""
+        # Trouver la ligne correspondante
+        for row in range(self.rowCount()):
+            item = self.item(row, 0)
+            if item and item.data() == transfer.transfer_id:
+                # Mettre à jour seulement les colonnes statistiques (Progrès, Vitesse, ETA)
+                
+                # Progrès avec informations détaillées
+                overall_progress = transfer.get_overall_progress()
+                completed = transfer.get_completed_files_count()
+                failed = transfer.get_failed_files_count()
+                total = len(transfer.child_files)
+                progress_text = f"{overall_progress}% ({completed + failed}/{total})"
+                if failed > 0:
+                    progress_text += f" - {failed} erreur(s)"
+                
+                # Mettre à jour l'affichage
+                progress_item = self.item(row, 3)
+                if progress_item:
+                    progress_item.setText(progress_text)
+                
+                speed_item = self.item(row, 4)  
+                if speed_item:
+                    speed_item.setText(transfer.get_speed_text())
+                
+                eta_item = self.item(row, 5)
+                if eta_item:
+                    eta_item.setText(transfer.get_eta_text())
+                
+                break
