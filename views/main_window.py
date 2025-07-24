@@ -432,12 +432,18 @@ class DriveExplorerMainWindow(QMainWindow):
         if not self.transfer_panel:
             return
             
-        # Connect new unified transfer panel signals
-        self.transfer_panel.retry_file_requested.connect(self._retry_single_file)
-        self.transfer_panel.retry_all_requested.connect(self._retry_all_files)
-        self.transfer_panel.clear_completed_requested.connect(self._clear_completed_files)
-        self.transfer_panel.pause_requested.connect(self._pause_uploads)
-        self.transfer_panel.resume_requested.connect(self._resume_uploads)
+        # Only connect signals if transfer_panel is actually a UnifiedTransferView
+        # (not a fallback QWidget when upload manager failed to initialize)
+        from views.unified_transfer_view import UnifiedTransferView
+        if isinstance(self.transfer_panel, UnifiedTransferView):
+            # Connect new unified transfer panel signals
+            self.transfer_panel.retry_file_requested.connect(self._retry_single_file)
+            self.transfer_panel.retry_all_requested.connect(self._retry_all_files)
+            self.transfer_panel.clear_completed_requested.connect(self._clear_completed_files)
+            self.transfer_panel.pause_requested.connect(self._pause_uploads)
+            self.transfer_panel.resume_requested.connect(self._resume_uploads)
+        else:
+            print("⚠️ Transfer panel is not UnifiedTransferView, skipping signal connections")
 
     def _retry_single_file(self, file_unique_id: str):
         """Retry a single file"""
