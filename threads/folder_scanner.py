@@ -42,6 +42,11 @@ class FolderScanner(QThread):
         
         # Batch processing
         self._batch_size = 100  # Process files in batches
+        
+        # Initialize attributes that will be set in scan_folder
+        self.folder_path = ""
+        self.destination_id = ""
+        self.is_shared_drive = False
     
     def scan_folder(self, folder_path: str, destination_id: str, 
                    is_shared_drive: bool = False) -> None:
@@ -362,6 +367,11 @@ class BatchFolderScanner(QThread):
                 try:
                     # Create individual scanner for this folder
                     scanner = FolderScanner(self.upload_queue, self.drive_client)
+                    
+                    # Set the required attributes for this scan
+                    scanner.folder_path = folder_path
+                    scanner.destination_id = self.destination_id
+                    scanner.is_shared_drive = self.is_shared_drive
                     
                     # Connect to scanner signals to forward them
                     scanner.folder_created.connect(

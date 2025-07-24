@@ -65,6 +65,42 @@ class UnifiedTransferView(QWidget):
             import traceback
             traceback.print_exc()
     
+    def set_upload_manager(self, upload_manager: UnifiedUploadManager):
+        """
+        Set or update the upload manager for this view
+        
+        Args:
+            upload_manager: The unified upload manager to use
+        """
+        try:
+            # Disconnect old signals if any
+            if self.upload_manager:
+                try:
+                    self.upload_manager.upload_progress.disconnect()
+                    self.upload_manager.status_message.disconnect()
+                except:
+                    pass  # Ignore disconnection errors
+            
+            # Set new upload manager
+            self.upload_manager = upload_manager
+            self.upload_queue = None
+            
+            if upload_manager and hasattr(upload_manager, 'upload_queue'):
+                self.upload_queue = upload_manager.upload_queue
+                
+            # Reconnect signals
+            self._connect_signals()
+            
+            # Update display immediately
+            self._safe_update_displays()
+            
+            print("✅ Upload manager updated in transfer view")
+            
+        except Exception as e:
+            print(f"❌ Error setting upload manager: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def _safe_update_displays(self):
         """Safely update displays with error handling"""
         try:

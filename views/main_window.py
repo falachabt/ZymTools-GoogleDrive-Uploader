@@ -102,6 +102,13 @@ class DriveExplorerMainWindow(QMainWindow):
             
             # Initialize upload manager now that we have a client
             try:
+                # Try to import required components first
+                from models.unified_upload_manager import UnifiedUploadManager
+                from models.upload_queue import UploadQueue
+                from threads.queue_workers import WorkerManager
+                
+                print("📦 Modules de gestionnaire d'upload importés avec succès")
+                
                 self.upload_manager = UnifiedUploadManager(
                     drive_client=self.drive_client,
                     num_workers=3,  # 3 workers
@@ -110,8 +117,15 @@ class DriveExplorerMainWindow(QMainWindow):
                 self._connect_upload_manager_signals()
                 print("✅ Gestionnaire d'upload initialisé avec succès")
                 
+            except ImportError as import_error:
+                print(f"❌ Erreur d'importation pour le gestionnaire d'upload: {import_error}")
+                self.upload_manager = None
+                # Keep connected to Drive but disable upload functionality
+                
             except Exception as upload_error:
                 print(f"❌ Erreur lors de l'initialisation du gestionnaire d'upload: {upload_error}")
+                import traceback
+                traceback.print_exc()
                 self.upload_manager = None
                 # Keep connected to Drive but disable upload functionality
                 
@@ -119,6 +133,8 @@ class DriveExplorerMainWindow(QMainWindow):
             self.connected = False
             self.upload_manager = None
             print(f"❌ Erreur de connexion à Google Drive: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _connect_upload_manager_signals(self):
         """Connect upload manager signals to UI"""
@@ -138,6 +154,54 @@ class DriveExplorerMainWindow(QMainWindow):
         self.upload_manager.upload_session_completed.connect(self._on_upload_session_completed)
         self.upload_manager.upload_session_paused.connect(self._on_upload_session_paused)
         self.upload_manager.upload_session_resumed.connect(self._on_upload_session_resumed)
+
+    def retry_upload_manager_initialization(self) -> bool:
+        """
+        Retry initialization of upload manager
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.connected or not self.drive_client:
+            print("❌ Pas de connexion Google Drive pour réinitialiser le gestionnaire d'upload")
+            return False
+            
+        try:
+            # Try to import required components first
+            from models.unified_upload_manager import UnifiedUploadManager
+            from models.upload_queue import UploadQueue
+            from threads.queue_workers import WorkerManager
+            
+            print("📦 Ré-importation des modules de gestionnaire d'upload...")
+            
+            # Cleanup existing manager if any
+            if hasattr(self, 'upload_manager') and self.upload_manager:
+                try:
+                    self.upload_manager.stop_upload_session()
+                    self.upload_manager.deleteLater()
+                except:
+                    pass
+            
+            self.upload_manager = UnifiedUploadManager(
+                drive_client=self.drive_client,
+                num_workers=3,  # 3 workers
+                files_per_worker=10  # 10 files per worker = 30 total parallel uploads
+            )
+            self._connect_upload_manager_signals()
+            print("✅ Gestionnaire d'upload réinitialisé avec succès")
+            
+            # Update transfer panel if it exists
+            if hasattr(self, 'transfer_panel') and hasattr(self.transfer_panel, 'set_upload_manager'):
+                self.transfer_panel.set_upload_manager(self.upload_manager)
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Échec de la réinitialisation du gestionnaire d'upload: {e}")
+            import traceback
+            traceback.print_exc()
+            self.upload_manager = None
+            return False
 
     def setup_ui(self) -> None:
         """Configure l'interface utilisateur avec onglets"""
@@ -1771,6 +1835,14 @@ class DriveExplorerMainWindow(QMainWindow):
             except Exception as e:
                 print(f"Erreur lors du chargement des Shared Drives: {e}")
             self.refresh_drive_files()
+            
+            # If upload manager wasn't initialized, try again
+            if not self.upload_manager:
+                print("🔄 Tentative de réinitialisation du gestionnaire d'upload...")
+                if self.retry_upload_manager_initialization():
+                    print("✅ Gestionnaire d'upload réinitialisé avec succès")
+                else:
+                    print("❌ Échec de la réinitialisation du gestionnaire d'upload")
             
             # Update transfer tab based on upload manager status
             self._update_transfer_tab()
