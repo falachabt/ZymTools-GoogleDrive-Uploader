@@ -329,12 +329,7 @@ class DriveExplorerMainWindow(QMainWindow):
 
         self.toolbar.addSeparator()
 
-        self.safe_mode_action = QAction("🛡️ Mode sécurisé", self)
-        self.safe_mode_action.setCheckable(True)
-        self.safe_mode_action.setChecked(self.SAFE_MODE)
-        self.safe_mode_action.setToolTip("Basculer entre mode sécurisé et rapide pour les uploads")
-        self.safe_mode_action.triggered.connect(self.toggle_safe_mode)
-        self.toolbar.addAction(self.safe_mode_action)
+
 
         self.addToolBar(self.toolbar)
         self.update_toolbar_state()

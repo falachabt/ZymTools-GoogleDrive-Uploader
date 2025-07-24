@@ -427,7 +427,7 @@ class AllFilesListWidget(QWidget):
                 
                 if transfer.is_folder_transfer and transfer.child_files:
                     # Fichiers individuels dans les dossiers
-                    for file_path, file_item in transfer.child_files.items():
+                    for file_path, file_item in list(transfer.child_files.items()):
                         # Statistiques (toujours compter)
                         stats["total"] += 1
                         if file_item.status == TransferStatus.PENDING:
@@ -735,7 +735,7 @@ class TransferPanel(QWidget):
         # Bouton pour réduire/agrandir
         self.toggle_button = QPushButton("🔽")
         self.toggle_button.setFixedSize(25, 25)
-        
+
         # Connecter le signal avec vérification
         try:
             print("🔧 Tentative de connexion du toggle_button...")
@@ -750,7 +750,7 @@ class TransferPanel(QWidget):
             print(f"❌ Erreur lors de la connexion du toggle_button: {e}")
             import traceback
             traceback.print_exc()
-            
+
         title_layout.addWidget(self.toggle_button)
 
         layout.addLayout(title_layout)
@@ -897,7 +897,7 @@ class TransferPanel(QWidget):
             if not hasattr(self, 'toggle_button'):
                 print("❌ Erreur: toggle_button n'existe pas")
                 return
-                
+
             self.is_collapsed = not self.is_collapsed
             self.main_content.setVisible(not self.is_collapsed)
             self.toggle_button.setText("🔼" if self.is_collapsed else "🔽")
