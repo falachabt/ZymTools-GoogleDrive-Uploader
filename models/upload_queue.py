@@ -164,6 +164,10 @@ class FolderInfo:
     skipped_files: int = 0
     in_progress_files: int = 0
     
+    # Scanning state
+    is_scanning: bool = False
+    scan_completed: bool = False
+    
     # Timing
     created_time: datetime = field(default_factory=datetime.now)
     
@@ -185,6 +189,25 @@ class FolderInfo:
     def has_errors(self) -> bool:
         """Returns True if any files failed"""
         return self.failed_files > 0
+    
+    @property 
+    def status_text(self) -> str:
+        """Get human-readable status for this folder"""
+        if self.is_scanning:
+            return "🔍 Scan en cours..."
+        elif not self.scan_completed:
+            return "⏳ En attente"
+        elif self.is_completed:
+            if self.has_errors:
+                return "✅ Terminé (avec erreurs)"
+            else:
+                return "✅ Terminé"
+        elif self.in_progress_files > 0:
+            return "🔄 En cours"
+        elif self.total_files > 0:
+            return "⏳ En attente"
+        else:
+            return "📁 Vide"
 
 
 class UploadQueue(QObject):
@@ -281,6 +304,56 @@ class UploadQueue(QObject):
                 if self.add_file(file):
                     added_count += 1
         return added_count
+    
+    def register_folder_for_scanning(self, folder_path: str, destination_id: str) -> bool:
+        """
+        Pre-register a folder that will be scanned (for immediate UI feedback)
+        
+        Args:
+            folder_path: Local folder path
+            destination_id: Google Drive destination folder ID
+            
+        Returns:
+            True if folder was registered (not already present)
+        """
+        with self._lock:
+            if folder_path not in self._folders:
+                folder_info = FolderInfo(
+                    folder_path=folder_path,
+                    folder_name=os.path.basename(folder_path),
+                    destination_id=destination_id,
+                    is_scanning=True,
+                    scan_completed=False
+                )
+                self._folders[folder_path] = folder_info
+                self.folder_added.emit(folder_path)
+                self.queue_statistics_changed.emit()
+                return True
+            else:
+                # Update existing folder to scanning status
+                self._folders[folder_path].is_scanning = True
+                self._folders[folder_path].scan_completed = False
+                self.folder_updated.emit(folder_path)
+                return False
+    
+    def mark_folder_scan_completed(self, folder_path: str) -> bool:
+        """
+        Mark a folder's scanning as completed
+        
+        Args:
+            folder_path: Local folder path
+            
+        Returns:
+            True if folder exists and was updated
+        """
+        with self._lock:
+            if folder_path in self._folders:
+                self._folders[folder_path].is_scanning = False
+                self._folders[folder_path].scan_completed = True
+                self.folder_updated.emit(folder_path)
+                self.queue_statistics_changed.emit()
+                return True
+            return False
     
     def get_next_pending_file(self) -> Optional[QueuedFile]:
         """

@@ -224,6 +224,12 @@ class UnifiedUploadManager(QObject):
             )
             return False
         
+        # Store destination for use in scanning callbacks
+        self.destination_id = destination_id
+        
+        # Pre-register folder for immediate UI feedback
+        self.upload_queue.register_folder_for_scanning(folder_path, destination_id)
+        
         # Auto-start session if not active
         if not self._is_active:
             self.start_upload_session()
@@ -265,6 +271,13 @@ class UnifiedUploadManager(QObject):
                 "Aucun dossier valide trouvé"
             )
             return False
+        
+        # Store destination for use in scanning callbacks
+        self.destination_id = destination_id
+        
+        # Pre-register all folders for immediate UI feedback
+        for folder_path in valid_folders:
+            self.upload_queue.register_folder_for_scanning(folder_path, destination_id)
         
         # Auto-start session if not active
         if not self._is_active:
@@ -407,6 +420,10 @@ class UnifiedUploadManager(QObject):
         """Handle folder scanning started"""
         folder_name = os.path.basename(folder_path)
         self.status_message.emit(f"🔍 Scan du dossier: {folder_name}")
+        
+        # Pre-register folder for immediate UI feedback if destination is available
+        if hasattr(self, 'destination_id') and self.destination_id:
+            self.upload_queue.register_folder_for_scanning(folder_path, self.destination_id)
     
     def _on_folder_created(self, local_path: str, folder_name: str, drive_folder_id: str):
         """Handle folder created on Drive"""
@@ -421,6 +438,9 @@ class UnifiedUploadManager(QObject):
         """Handle folder scanning completed"""
         folder_name = os.path.basename(folder_path)
         self.status_message.emit(f"✅ Scan terminé: {folder_name} ({total_files} fichiers)")
+        
+        # Mark folder scanning as completed
+        self.upload_queue.mark_folder_scan_completed(folder_path)
     
     def _on_scanning_error(self, folder_path: str, error_message: str):
         """Handle scanning error"""
@@ -444,6 +464,9 @@ class UnifiedUploadManager(QObject):
         """Handle individual folder in batch completed"""
         folder_name = os.path.basename(folder_path)
         self.status_message.emit(f"✅ Scan ({folder_index + 1}) terminé: {folder_name} ({files_added} fichiers)")
+        
+        # Mark folder scanning as completed
+        self.upload_queue.mark_folder_scan_completed(folder_path)
     
     def _on_folder_scanning_error(self, folder_index: int, folder_path: str, error: str):
         """Handle individual folder in batch error"""
