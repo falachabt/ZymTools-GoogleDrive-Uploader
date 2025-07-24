@@ -111,8 +111,8 @@ class DriveExplorerMainWindow(QMainWindow):
                 
                 self.upload_manager = UnifiedUploadManager(
                     drive_client=self.drive_client,
-                    num_workers=3,  # 3 workers
-                    files_per_worker=10  # 10 files per worker = 30 total parallel uploads
+                    num_workers=2,  # Reduced from 3 to 2 workers
+                    files_per_worker=5  # Reduced from 10 to 5 files per worker = 10 total parallel uploads
                 )
                 self._connect_upload_manager_signals()
                 print("✅ Gestionnaire d'upload initialisé avec succès")
@@ -184,8 +184,8 @@ class DriveExplorerMainWindow(QMainWindow):
             
             self.upload_manager = UnifiedUploadManager(
                 drive_client=self.drive_client,
-                num_workers=3,  # 3 workers
-                files_per_worker=10  # 10 files per worker = 30 total parallel uploads
+                num_workers=2,  # Reduced from 3 to 2 workers
+                files_per_worker=5  # Reduced from 10 to 5 files per worker = 10 total parallel uploads
             )
             self._connect_upload_manager_signals()
             print("✅ Gestionnaire d'upload réinitialisé avec succès")
@@ -1783,8 +1783,8 @@ class DriveExplorerMainWindow(QMainWindow):
                 # Try to reinitialize upload manager
                 self.upload_manager = UnifiedUploadManager(
                     drive_client=self.drive_client,
-                    num_workers=3,
-                    files_per_worker=10
+                    num_workers=2,  # Reduced to prevent rate limiting
+                    files_per_worker=5  # Reduced to prevent rate limiting
                 )
                 self._connect_upload_manager_signals()
                 print("✅ Gestionnaire d'upload réinitialisé avec succès")

@@ -223,25 +223,48 @@ class QueueWorker(QThread):
                 return True  # Continue upload
             
             # Upload the file
-            try:
-                uploaded_file_id = drive_client.upload_file_with_progress(
-                    file.file_path,
-                    file.destination_folder_id,
-                    progress_callback=progress_callback,
-                    is_shared_drive=False  # TODO: Get from settings
-                )
-                
-                # Upload successful
-                self.upload_queue.complete_file(unique_id, uploaded_file_id)
-                self.file_completed.emit(self.worker_id, unique_id, uploaded_file_id)
-                self._files_processed += 1
-                self._total_bytes_transferred += file.file_size
-                
-            except Exception as upload_error:
-                # Upload failed
-                error_msg = str(upload_error)
-                self.upload_queue.fail_file(unique_id, error_msg)
-                self.file_failed.emit(self.worker_id, unique_id, error_msg)
+            max_retries = 3
+            retry_count = 0
+            
+            while retry_count <= max_retries:
+                try:
+                    uploaded_file_id = drive_client.upload_file_with_progress(
+                        file.file_path,
+                        file.destination_folder_id,
+                        progress_callback=progress_callback,
+                        is_shared_drive=False  # TODO: Get from settings
+                    )
+                    
+                    # Upload successful
+                    self.upload_queue.complete_file(unique_id, uploaded_file_id)
+                    self.file_completed.emit(self.worker_id, unique_id, uploaded_file_id)
+                    self._files_processed += 1
+                    self._total_bytes_transferred += file.file_size
+                    break  # Success, exit retry loop
+                    
+                except Exception as upload_error:
+                    error_str = str(upload_error).lower()
+                    
+                    # Check if it's a rate limit error (403 with rate limit exceeded)
+                    if ("403" in error_str and ("rate" in error_str or "limit" in error_str or "quota" in error_str)) or \
+                       ("userratelimitexceeded" in error_str):
+                        
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            # Exponential backoff: 2^retry_count seconds
+                            backoff_time = 2 ** retry_count
+                            print(f"⏳ Rate limit hit for {file.file_name}, retrying in {backoff_time}s (attempt {retry_count}/{max_retries})")
+                            time.sleep(backoff_time)
+                            continue
+                    
+                    # Either not a rate limit error, or max retries exceeded
+                    error_msg = str(upload_error)
+                    if retry_count > 0:
+                        error_msg = f"Upload error after {retry_count} retries: {error_msg}"
+                    
+                    self.upload_queue.fail_file(unique_id, error_msg)
+                    self.file_failed.emit(self.worker_id, unique_id, error_msg)
+                    break  # Exit retry loop
             
             # Return client to pool
             self._return_drive_client(drive_client)
