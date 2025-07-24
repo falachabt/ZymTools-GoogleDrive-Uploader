@@ -310,6 +310,67 @@ class GoogleDriveClient:
 
         return response.get('id')
 
+    def upload_file_with_progress(self, file_path: str, parent_id: str = 'root',
+                                 progress_callback=None, is_shared_drive: bool = False) -> str:
+        """
+        Upload a file with detailed progress callback (bytes transferred)
+        
+        Args:
+            file_path: Local file path
+            parent_id: Google Drive parent folder ID
+            progress_callback: Function(bytes_transferred, total_bytes) -> bool
+            is_shared_drive: Whether it's a shared drive
+            
+        Returns:
+            ID of uploaded file
+        """
+        file_name = os.path.basename(file_path)
+        file_metadata = {
+            'name': file_name,
+            'parents': [parent_id]
+        }
+
+        media = MediaFileUpload(file_path, resumable=True, chunksize=UPLOAD_CHUNK_SIZE)
+
+        try:
+            request = self.service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id',
+                supportsAllDrives=True
+            )
+        except Exception as e:
+            # Fallback without shared drive support
+            request = self.service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            )
+
+        response = None
+        file_size = os.path.getsize(file_path)
+        uploaded = 0
+
+        while response is None:
+            try:
+                status, response = request.next_chunk()
+                if status:
+                    uploaded += UPLOAD_CHUNK_SIZE
+                    uploaded = min(uploaded, file_size)  # Don't exceed file size
+                    
+                    # Call progress callback with bytes
+                    if progress_callback:
+                        should_continue = progress_callback(uploaded, file_size)
+                        if should_continue is False:
+                            # Upload was cancelled
+                            raise Exception("Upload cancelled by user")
+                            
+            except Exception as e:
+                # Re-raise upload exceptions
+                raise Exception(f"Upload error: {str(e)}")
+
+        return response.get('id')
+
     def create_folder(self, folder_name: str, parent_id: str = 'root',
                       is_shared_drive: bool = False) -> str:
         """
