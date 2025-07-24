@@ -83,6 +83,11 @@ class DriveExplorerMainWindow(QMainWindow):
         # Threads de chargement
         self.local_load_thread = None
         self.drive_load_thread = None
+        
+        # Legacy thread lists (for backward compatibility with remaining old code)
+        self.upload_threads = []
+        self.download_threads = []
+        self.folder_upload_threads = []
 
     def connect_to_drive(self) -> None:
         """Connecte à Google Drive"""
@@ -363,13 +368,24 @@ class DriveExplorerMainWindow(QMainWindow):
     def on_tab_changed(self, index: int) -> None:
         """Appelé quand l'onglet change"""
         if index == 1:  # Onglet Transferts
-            # Mettre à jour le titre de l'onglet avec le nombre de transferts
-            transfer_count = len(self.transfer_manager.get_all_transfers())
-            active_count = len(self.transfer_manager.get_active_transfers())
-            if active_count > 0:
-                self.tab_widget.setTabText(1, f"📋 Transferts ({active_count} actifs)")
-            else:
-                self.tab_widget.setTabText(1, f"📋 Transferts ({transfer_count})")
+            try:
+                # Mettre à jour le titre de l'onglet avec le nombre de transferts
+                if self.upload_manager and hasattr(self.upload_manager, 'get_queue_statistics'):
+                    stats = self.upload_manager.get_queue_statistics()
+                    total_files = stats.get('total_files', 0)
+                    active_files = stats.get('active_files', 0)
+                    
+                    if active_files > 0:
+                        self.tab_widget.setTabText(1, f"📋 Transferts ({active_files} actifs)")
+                    elif total_files > 0:
+                        self.tab_widget.setTabText(1, f"📋 Transferts ({total_files})")
+                    else:
+                        self.tab_widget.setTabText(1, "📋 Transferts")
+                else:
+                    self.tab_widget.setTabText(1, "📋 Transferts")
+            except Exception as e:
+                print(f"❌ Error updating transfer tab title: {e}")
+                self.tab_widget.setTabText(1, "📋 Transferts")
 
     def show_transfers_tab(self) -> None:
         """Affiche l'onglet des transferts"""
@@ -905,40 +921,51 @@ class DriveExplorerMainWindow(QMainWindow):
             else:
                 upload_mode = 1  # Séquentiel pour les fichiers simples
 
+            # Use new unified upload system instead of old threads
+            if not self.upload_manager:
+                ErrorDialog.show_error("❌ Erreur d'upload", "Gestionnaire d'upload non initialisé", parent=self)
+                return
+
+            files_to_upload = []
+            folders_to_upload = []
+
+            # Separate files and folders
             for row, name in items_to_upload:
                 item_path = os.path.join(self.local_model.current_path, name)
 
                 if os.path.isfile(item_path):
-                    # Upload de fichier simple (toujours sécurisé)
-                    upload_thread = UploadThread(
-                        self.drive_client, item_path, destination_id,
-                        is_shared_drive, self.transfer_manager
-                    )
-                    upload_thread.progress_signal.connect(self.update_progress)
-                    upload_thread.completed_signal.connect(self.upload_completed)
-                    upload_thread.error_signal.connect(self.upload_error)
-                    upload_thread.status_signal.connect(self.update_status)
-                    upload_thread.time_signal.connect(self.update_upload_time)
-                    self.upload_threads.append(upload_thread)
-                    upload_thread.start()
-
+                    files_to_upload.append(item_path)
                 elif os.path.isdir(item_path):
-                    # Upload de dossier sécurisé
-                    folder_upload_thread = SafeFolderUploadThread(
-                        self.drive_client, item_path, destination_id,
-                        is_shared_drive, self.transfer_manager,
-                        max_parallel_uploads=upload_mode  # Mode choisi par l'utilisateur
-                    )
-                    folder_upload_thread.progress_signal.connect(self.update_progress)
-                    folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
-                    folder_upload_thread.error_signal.connect(self.upload_error)
-                    folder_upload_thread.status_signal.connect(self.update_status)
-                    folder_upload_thread.time_signal.connect(self.update_upload_time)
-                    self.folder_upload_threads.append(folder_upload_thread)
-                    folder_upload_thread.start()
+                    folders_to_upload.append(item_path)
 
-            # Afficher l'onglet des transferts
-            self.show_transfers_tab()
+            # Add files to upload queue
+            if files_to_upload:
+                print(f"📁 Adding {len(files_to_upload)} files to upload queue")
+                files_added = self.upload_manager.add_files(files_to_upload, destination_id, is_shared_drive)
+                if files_added > 0:
+                    self.status_bar.showMessage(f"✅ {files_added} fichier(s) ajouté(s) à la file d'upload", 3000)
+                else:
+                    self.status_bar.showMessage("⚠️ Aucun fichier valide à uploader", 3000)
+
+            # Add folders to upload queue
+            if folders_to_upload:
+                if len(folders_to_upload) == 1:
+                    print(f"📁 Adding folder {folders_to_upload[0]} to upload queue")
+                    success = self.upload_manager.add_folder(folders_to_upload[0], destination_id, is_shared_drive)
+                    success_count = 1 if success else 0
+                else:
+                    print(f"📁 Adding {len(folders_to_upload)} folders to upload queue")
+                    success = self.upload_manager.add_folders(folders_to_upload, destination_id, is_shared_drive)
+                    success_count = len(folders_to_upload) if success else 0
+                
+                if success_count > 0:
+                    self.status_bar.showMessage(f"✅ {success_count} dossier(s) ajouté(s) à la file d'upload", 3000)
+                else:
+                    self.status_bar.showMessage("⚠️ Erreur lors de l'ajout des dossiers", 3000)
+
+            # Show transfers tab if anything was added
+            if (files_to_upload and files_added > 0) or (folders_to_upload and success_count > 0):
+                self.show_transfers_tab()
 
         except Exception as e:
             print(f"Erreur dans upload_selected_files: {e}")
@@ -1051,7 +1078,7 @@ class DriveExplorerMainWindow(QMainWindow):
             for row, name, file_id, file_size in files_to_download:
                 download_thread = DownloadThread(
                     self.drive_client, file_id, name, destination_dir,
-                    file_size, self.transfer_manager
+                    file_size, None  # Download doesn't need transfer manager for now
                 )
                 download_thread.progress_signal.connect(self.update_progress)
                 download_thread.completed_signal.connect(self.download_completed)
@@ -1798,61 +1825,33 @@ class DriveExplorerMainWindow(QMainWindow):
         # Pour l'instant, juste mettre à jour le statut
         pass
 
-    def retry_failed_files(self, transfer_id: str) -> None:
-        """Réessaie les fichiers échoués d'un transfert de dossier"""
-        transfer = self.transfer_manager.get_transfer(transfer_id)
-        if not transfer or not transfer.is_folder_transfer:
-            return
-            
-        failed_files = self.transfer_manager.get_failed_files_for_retry(transfer_id)
-        if not failed_files:
-            self.status_bar.showMessage("⚠️ Aucun fichier en erreur à réessayer", 3000)
-            return
-            
-        # Marquer les fichiers pour retry dans le transfer manager
-        retry_files = self.transfer_manager.retry_failed_files(transfer_id)
-        
-        if not retry_files:
-            self.status_bar.showMessage("⚠️ Aucun fichier disponible pour réessai", 3000)
-            return
-        
-        self.status_bar.showMessage(f"🔄 Démarrage du réessai pour {len(retry_files)} fichier(s)...", 3000)
-        
-        # Créer un thread de retry spécialisé pour traiter seulement les fichiers échoués
-        self.start_retry_upload_thread(transfer, retry_files)
-
-    def start_retry_upload_thread(self, transfer, retry_files) -> None:
-        """Démarre un thread spécialisé pour réessayer les fichiers échoués"""
-        if not self.connected:
-            self.status_bar.showMessage("❌ Pas de connexion Google Drive", 3000)
+    def retry_failed_files(self, transfer_id: str = None) -> None:
+        """Réessaie les fichiers échoués (utilise le nouveau gestionnaire unifié)"""
+        if not self.upload_manager:
+            self.status_bar.showMessage("⚠️ Gestionnaire d'upload non disponible", 3000)
             return
             
         try:
-            # Créer un thread de retry personnalisé
-            retry_thread = RetryUploadThread(
-                drive_client=self.drive_client,
-                transfer=transfer,
-                retry_files=retry_files,
-                transfer_manager=self.transfer_manager
-            )
-            
-            # Connecter les signaux
-            retry_thread.progress_signal.connect(lambda p: self.status_bar.showMessage(f"🔄 Retry: {p}%", 1000))
-            retry_thread.completed_signal.connect(lambda: self.status_bar.showMessage("✅ Retry terminé", 3000))
-            retry_thread.error_signal.connect(lambda err: self.status_bar.showMessage(f"❌ Erreur retry: {err[:50]}...", 5000))
-            retry_thread.status_signal.connect(lambda status: self.status_bar.showMessage(status, 2000))
-            
-            # Démarrer le thread
-            retry_thread.start()
-            self.folder_upload_threads.append(retry_thread)
-            
+            retry_count = self.upload_manager.retry_failed_files()
+            if retry_count > 0:
+                self.status_bar.showMessage(f"🔄 {retry_count} fichier(s) relancé(s)", 3000)
+            else:
+                self.status_bar.showMessage("⚠️ Aucun fichier en erreur à réessayer", 3000)
         except Exception as e:
-            self.status_bar.showMessage(f"❌ Erreur lors du démarrage du retry: {str(e)}", 5000)
+            self.status_bar.showMessage(f"❌ Erreur lors du retry: {str(e)}", 5000)
+
 
     def clear_completed_transfers(self) -> None:
-        """Supprime tous les transferts terminés"""
-        self.transfer_manager.clear_completed_transfers()
-        self.status_bar.showMessage("🧹 Transferts terminés supprimés", 2000)
+        """Supprime tous les transferts terminés (utilise le nouveau gestionnaire unifié)"""
+        if not self.upload_manager:
+            self.status_bar.showMessage("⚠️ Gestionnaire d'upload non disponible", 3000)
+            return
+            
+        try:
+            self.upload_manager.clear_completed_files()
+            self.status_bar.showMessage("🧹 Transferts terminés supprimés", 2000)
+        except Exception as e:
+            self.status_bar.showMessage(f"❌ Erreur lors du nettoyage: {str(e)}", 3000)
 
     # === MÉTHODES UTILITAIRES ===
 
