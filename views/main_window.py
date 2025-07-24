@@ -92,20 +92,32 @@ class DriveExplorerMainWindow(QMainWindow):
     def connect_to_drive(self) -> None:
         """Connecte à Google Drive"""
         try:
+            # Reset upload manager state
+            self.upload_manager = None
+            
+            # Initialize Google Drive client
             self.drive_client = GoogleDriveClient()
             self.connected = True
             print("✅ Connexion à Google Drive réussie")
             
             # Initialize upload manager now that we have a client
-            self.upload_manager = UnifiedUploadManager(
-                drive_client=self.drive_client,
-                num_workers=3,  # 3 workers
-                files_per_worker=10  # 10 files per worker = 30 total parallel uploads
-            )
-            self._connect_upload_manager_signals()
-            
+            try:
+                self.upload_manager = UnifiedUploadManager(
+                    drive_client=self.drive_client,
+                    num_workers=3,  # 3 workers
+                    files_per_worker=10  # 10 files per worker = 30 total parallel uploads
+                )
+                self._connect_upload_manager_signals()
+                print("✅ Gestionnaire d'upload initialisé avec succès")
+                
+            except Exception as upload_error:
+                print(f"❌ Erreur lors de l'initialisation du gestionnaire d'upload: {upload_error}")
+                self.upload_manager = None
+                # Keep connected to Drive but disable upload functionality
+                
         except Exception as e:
             self.connected = False
+            self.upload_manager = None
             print(f"❌ Erreur de connexion à Google Drive: {e}")
 
     def _connect_upload_manager_signals(self):
@@ -149,9 +161,19 @@ class DriveExplorerMainWindow(QMainWindow):
 
         # Onglet 2: Gestionnaire de transferts (nouvelle architecture)  
         try:
-            self.transfer_panel = UnifiedTransferView(self.upload_manager)
-            self.tab_widget.addTab(self.transfer_panel, "📋 Transferts")
-            print("✅ Transfer panel created successfully")
+            # If upload manager failed to initialize, show a special message
+            if self.connected and not self.upload_manager:
+                # Connected to Drive but upload manager failed - show retry option
+                self.transfer_panel = self._create_upload_manager_error_widget()
+                self.tab_widget.addTab(self.transfer_panel, "📋 Transferts (Non disponible)")
+                print("⚠️ Transfer panel created with upload manager error widget")
+            else:
+                # Normal transfer panel (upload_manager could be None if not connected)
+                self.transfer_panel = UnifiedTransferView(self.upload_manager)
+                tab_title = "📋 Transferts" if self.upload_manager else "📋 Transferts (Non connecté)"
+                self.tab_widget.addTab(self.transfer_panel, tab_title)
+                print("✅ Transfer panel created successfully")
+                
         except Exception as e:
             print(f"❌ Error creating transfer panel: {e}")
             # Create a fallback widget
@@ -922,8 +944,17 @@ class DriveExplorerMainWindow(QMainWindow):
                 upload_mode = 1  # Séquentiel pour les fichiers simples
 
             # Use new unified upload system instead of old threads
+            if not self.connected:
+                ErrorDialog.show_error("❌ Non connecté", "Connexion Google Drive requise", parent=self)
+                return
+            
             if not self.upload_manager:
-                ErrorDialog.show_error("❌ Erreur d'upload", "Gestionnaire d'upload non initialisé", parent=self)
+                ErrorDialog.show_error(
+                    "❌ Gestionnaire d'upload non disponible", 
+                    "Le gestionnaire d'upload n'a pas pu être initialisé.\n"
+                    "Essayez de vous reconnecter à Google Drive via le menu Outils > Reconnexion.",
+                    parent=self
+                )
                 return
 
             files_to_upload = []
@@ -1622,6 +1653,106 @@ class DriveExplorerMainWindow(QMainWindow):
             self.status_bar.showMessage("🔌 Déconnecté de Google Drive", 3000)
             self.update_toolbar_state()
 
+    def _create_upload_manager_error_widget(self) -> QWidget:
+        """Create a widget to show when upload manager initialization failed"""
+        error_widget = QWidget()
+        error_layout = QVBoxLayout(error_widget)
+        
+        # Title
+        title_label = QLabel("❌ Gestionnaire d'upload non disponible")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #ff6b6b; padding: 10px;")
+        error_layout.addWidget(title_label)
+        
+        # Message
+        message_label = QLabel(
+            "Le gestionnaire d'upload n'a pas pu être initialisé.\n"
+            "Vous êtes connecté à Google Drive mais les transferts ne sont pas disponibles.\n\n"
+            "Essayez de vous reconnecter pour résoudre le problème."
+        )
+        message_label.setAlignment(Qt.AlignCenter)
+        message_label.setStyleSheet("padding: 20px; color: #666;")
+        message_label.setWordWrap(True)
+        error_layout.addWidget(message_label)
+        
+        # Retry button
+        retry_button = QPushButton("🔄 Réessayer la connexion")
+        retry_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        retry_button.clicked.connect(self.reinitialize_upload_manager)
+        
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(retry_button)
+        button_layout.addStretch()
+        error_layout.addLayout(button_layout)
+        
+        error_layout.addStretch()
+        
+        return error_widget
+    
+    def reinitialize_upload_manager(self):
+        """Reinitialize the upload manager after connection issues"""
+        try:
+            if not self.connected or not self.drive_client:
+                # Reconnect to Drive first
+                self.connect_to_drive()
+            
+            if self.connected and not self.upload_manager:
+                # Try to reinitialize upload manager
+                self.upload_manager = UnifiedUploadManager(
+                    drive_client=self.drive_client,
+                    num_workers=3,
+                    files_per_worker=10
+                )
+                self._connect_upload_manager_signals()
+                print("✅ Gestionnaire d'upload réinitialisé avec succès")
+                
+                # Update transfer tab
+                self._update_transfer_tab()
+                self.status_bar.showMessage("✅ Gestionnaire d'upload réinitialisé", 3000)
+                
+            elif not self.connected:
+                self.status_bar.showMessage("❌ Impossible de se connecter à Google Drive", 3000)
+            else:
+                self.status_bar.showMessage("✅ Gestionnaire d'upload déjà fonctionnel", 2000)
+                
+        except Exception as e:
+            print(f"❌ Erreur lors de la réinitialisation: {e}")
+            self.status_bar.showMessage(f"❌ Erreur de réinitialisation: {str(e)}", 5000)
+    
+    def _update_transfer_tab(self):
+        """Update the transfer tab after upload manager reinitialization"""
+        try:
+            # Remove the current transfer tab
+            transfer_tab_index = 1  # Second tab
+            if transfer_tab_index < self.tab_widget.count():
+                self.tab_widget.removeTab(transfer_tab_index)
+            
+            # Recreate the transfer panel
+            if self.upload_manager:
+                self.transfer_panel = UnifiedTransferView(self.upload_manager)
+                self.tab_widget.insertTab(transfer_tab_index, self.transfer_panel, "📋 Transferts")
+                self.connect_transfer_signals()  # Reconnect signals
+            else:
+                # Still not available
+                error_widget = self._create_upload_manager_error_widget()
+                self.tab_widget.insertTab(transfer_tab_index, error_widget, "📋 Transferts (Non disponible)")
+                
+        except Exception as e:
+            print(f"❌ Erreur lors de la mise à jour de l'onglet transfert: {e}")
+
     def reconnect_to_drive(self) -> None:
         """Se reconnecte à Google Drive"""
         self.connect_to_drive()
@@ -1634,7 +1765,14 @@ class DriveExplorerMainWindow(QMainWindow):
             except Exception as e:
                 print(f"Erreur lors du chargement des Shared Drives: {e}")
             self.refresh_drive_files()
-            self.status_bar.showMessage("🔗 Reconnecté à Google Drive", 3000)
+            
+            # Update transfer tab based on upload manager status
+            self._update_transfer_tab()
+            
+            status_msg = "🔗 Reconnecté à Google Drive"
+            if not self.upload_manager:
+                status_msg += " (Gestionnaire d'upload non disponible)"
+            self.status_bar.showMessage(status_msg, 3000)
         self.update_toolbar_state()
 
     # ==================== CALLBACKS POUR LES THREADS ====================
@@ -1756,8 +1894,17 @@ class DriveExplorerMainWindow(QMainWindow):
     def upload_files_list(self, file_paths):
         """Upload une liste de fichiers/dossiers vers Google Drive (nouvelle architecture unifiée)"""
         try:
-            if not self.connected or not self.upload_manager:
+            if not self.connected:
                 ErrorDialog.show_error("❌ Non connecté", "Connexion Google Drive requise", parent=self)
+                return
+                
+            if not self.upload_manager:
+                ErrorDialog.show_error(
+                    "❌ Gestionnaire d'upload non disponible", 
+                    "Le gestionnaire d'upload n'a pas pu être initialisé.\n"
+                    "Essayez de vous reconnecter à Google Drive via le menu Outils > Reconnexion.",
+                    parent=self
+                )
                 return
 
             destination_id = self.drive_model.current_path_id
