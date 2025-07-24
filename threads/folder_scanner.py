@@ -171,7 +171,7 @@ class FolderScanner(QThread):
     def _create_drive_structure(self, root_path: str, parent_id: str, 
                               folder_structure: Dict[str, List[str]]) -> Dict[str, str]:
         """
-        Create Google Drive folder structure
+        Create Google Drive folder structure with proper hierarchical order
         
         Args:
             root_path: Local root folder path
@@ -198,43 +198,58 @@ class FolderScanner(QThread):
         if self._should_stop:
             return folder_mapping
         
-        # Create subfolders in proper order (breadth-first)
-        folders_to_create = list(folder_structure.keys())
-        folders_to_create.sort(key=lambda x: x.count(os.sep))  # Shallow folders first
+        # Create complete list of all folders that need to be created
+        all_folders_to_create = []
+        for rel_path, subfolders in folder_structure.items():
+            for subfolder_name in subfolders:
+                if rel_path == '':
+                    subfolder_rel_path = subfolder_name
+                else:
+                    subfolder_rel_path = os.path.join(rel_path, subfolder_name)
+                all_folders_to_create.append(subfolder_rel_path)
         
-        for rel_path in folders_to_create:
+        # Sort by depth to ensure parent folders are created before children
+        all_folders_to_create.sort(key=lambda x: x.count(os.sep))
+        
+        # Create folders one by one in hierarchical order
+        for subfolder_rel_path in all_folders_to_create:
             if self._should_stop:
                 break
             
-            if rel_path == '':
-                continue  # Skip root
+            # Skip if already created
+            if subfolder_rel_path in folder_mapping:
+                continue
             
-            subfolders = folder_structure[rel_path]
-            parent_rel_path = os.path.dirname(rel_path) if os.path.dirname(rel_path) != rel_path else ''
+            # Determine parent folder
+            parent_rel_path = os.path.dirname(subfolder_rel_path)
+            if parent_rel_path == '.':
+                parent_rel_path = ''
+            
+            # Get parent Drive folder ID - must exist by now due to sorting
             parent_drive_id = folder_mapping.get(parent_rel_path, main_folder_id)
             
-            for subfolder_name in subfolders:
-                if self._should_stop:
-                    break
+            # Get folder name
+            subfolder_name = os.path.basename(subfolder_rel_path)
+            
+            try:
+                # Create the folder
+                subfolder_id = self.drive_client.create_folder(
+                    subfolder_name, parent_drive_id, self.is_shared_drive
+                )
+                folder_mapping[subfolder_rel_path] = subfolder_id
                 
-                subfolder_rel_path = os.path.join(rel_path, subfolder_name) if rel_path else subfolder_name
+                local_subfolder_path = os.path.join(root_path, subfolder_rel_path)
+                self.folder_created.emit(local_subfolder_path, subfolder_name, subfolder_id)
                 
-                try:
-                    subfolder_id = self.drive_client.create_folder(
-                        subfolder_name, parent_drive_id, self.is_shared_drive
-                    )
-                    folder_mapping[subfolder_rel_path] = subfolder_id
-                    
-                    local_subfolder_path = os.path.join(root_path, subfolder_rel_path)
-                    self.folder_created.emit(local_subfolder_path, subfolder_name, subfolder_id)
-                    
-                except Exception as e:
-                    print(f"⚠️ Failed to create folder '{subfolder_name}': {e}")
-                    # Use parent folder as fallback
-                    folder_mapping[subfolder_rel_path] = parent_drive_id
+                print(f"✅ Created folder: {subfolder_rel_path} -> {subfolder_id}")
                 
-                # Small delay to avoid rate limiting
-                time.sleep(0.05)
+            except Exception as e:
+                print(f"⚠️ Failed to create folder '{subfolder_name}' at '{subfolder_rel_path}': {e}")
+                # Use parent folder as fallback
+                folder_mapping[subfolder_rel_path] = parent_drive_id
+            
+            # Small delay to avoid rate limiting
+            time.sleep(0.05)
         
         return folder_mapping
     

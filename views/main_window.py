@@ -106,16 +106,21 @@ class DriveExplorerMainWindow(QMainWindow):
                 from models.unified_upload_manager import UnifiedUploadManager
                 from models.upload_queue import UploadQueue
                 from threads.queue_workers import WorkerManager
+                from config.upload_config import upload_config_manager
                 
                 print("📦 Modules de gestionnaire d'upload importés avec succès")
                 
+                # Load upload configuration
+                num_workers = upload_config_manager.get_num_workers()
+                files_per_worker = upload_config_manager.get_files_per_worker()
+                
                 self.upload_manager = UnifiedUploadManager(
                     drive_client=self.drive_client,
-                    num_workers=2,  # Reduced from 3 to 2 workers
-                    files_per_worker=5  # Reduced from 10 to 5 files per worker = 10 total parallel uploads
+                    num_workers=num_workers,
+                    files_per_worker=files_per_worker
                 )
                 self._connect_upload_manager_signals()
-                print("✅ Gestionnaire d'upload initialisé avec succès")
+                print(f"✅ Gestionnaire d'upload initialisé avec succès ({num_workers} workers, {files_per_worker} fichiers/worker)")
                 
             except ImportError as import_error:
                 print(f"❌ Erreur d'importation pour le gestionnaire d'upload: {import_error}")
@@ -171,6 +176,7 @@ class DriveExplorerMainWindow(QMainWindow):
             from models.unified_upload_manager import UnifiedUploadManager
             from models.upload_queue import UploadQueue
             from threads.queue_workers import WorkerManager
+            from config.upload_config import upload_config_manager
             
             print("📦 Ré-importation des modules de gestionnaire d'upload...")
             
@@ -182,13 +188,17 @@ class DriveExplorerMainWindow(QMainWindow):
                 except:
                     pass
             
+            # Load upload configuration
+            num_workers = upload_config_manager.get_num_workers()
+            files_per_worker = upload_config_manager.get_files_per_worker()
+            
             self.upload_manager = UnifiedUploadManager(
                 drive_client=self.drive_client,
-                num_workers=2,  # Reduced from 3 to 2 workers
-                files_per_worker=5  # Reduced from 10 to 5 files per worker = 10 total parallel uploads
+                num_workers=num_workers,
+                files_per_worker=files_per_worker
             )
             self._connect_upload_manager_signals()
-            print("✅ Gestionnaire d'upload réinitialisé avec succès")
+            print(f"✅ Gestionnaire d'upload réinitialisé avec succès ({num_workers} workers, {files_per_worker} fichiers/worker)")
             
             # Update transfer panel if it exists
             if hasattr(self, 'transfer_panel') and hasattr(self.transfer_panel, 'set_upload_manager'):
@@ -506,6 +516,7 @@ class DriveExplorerMainWindow(QMainWindow):
             self.transfer_panel.clear_completed_requested.connect(self._clear_completed_files)
             self.transfer_panel.pause_requested.connect(self._pause_uploads)
             self.transfer_panel.resume_requested.connect(self._resume_uploads)
+            self.transfer_panel.config_changed.connect(self._on_upload_config_changed)
         else:
             print("⚠️ Transfer panel is not UnifiedTransferView, skipping signal connections")
 
@@ -2150,6 +2161,12 @@ class DriveExplorerMainWindow(QMainWindow):
     def _on_upload_session_resumed(self):
         """Handle upload session resumed"""
         print("▶️ Session d'upload reprise")
+    
+    def _on_upload_config_changed(self, num_workers: int, files_per_worker: int):
+        """Handle upload configuration change"""
+        print(f"⚙️ Configuration d'upload modifiée: {num_workers} workers, {files_per_worker} fichiers/worker")
+        # Configuration is already saved by the dialog, 
+        # changes will be applied on next application restart
 
     # === LEGACY TRANSFER METHODS (to be updated/removed) ===
     
