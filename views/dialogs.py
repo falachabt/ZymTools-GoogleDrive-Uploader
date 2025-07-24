@@ -34,6 +34,11 @@ class SearchDialog(QDialog):
         # Formulaire de recherche
         form_layout = QFormLayout()
 
+        self.recommendation_label = QLabel()
+        self.recommendation_label.setText("")  # Texte initial vide ou message par défaut
+        layout.addWidget(self.recommendation_label)
+
+
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Entrez votre recherche...")
         self.search_edit.returnPressed.connect(self.accept)
@@ -41,11 +46,15 @@ class SearchDialog(QDialog):
 
         layout.addLayout(form_layout)
 
+
+
         # Boutons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+
 
         self.setLayout(layout)
         self.search_edit.setFocus()
@@ -363,3 +372,160 @@ class ProgressDialog(QDialog):
             status: Nouveau message de statut
         """
         self.status_label.setText(status)
+
+
+class UploadConfigDialog(QDialog):
+    """Boîte de dialogue pour configurer les paramètres d'upload"""
+
+    def __init__(self, current_workers: int = 2, current_files_per_worker: int = 5, parent=None):
+        """
+        Initialise la boîte de dialogue de configuration d'upload
+
+        Args:
+            current_workers: Nombre actuel de workers
+            current_files_per_worker: Nombre actuel de fichiers par worker
+            parent: Widget parent
+        """
+        super().__init__(parent)
+        self.setWindowTitle("⚙️ Configuration d'Upload")
+        self.setModal(True)
+        self.setFixedSize(450, 300)
+        
+        self.current_workers = current_workers
+        self.current_files_per_worker = current_files_per_worker
+        
+        self.setup_ui()
+
+    def setup_ui(self) -> None:
+        """Configure l'interface utilisateur"""
+        from PyQt5.QtWidgets import QSpinBox, QGroupBox
+        from config.settings import (MIN_NUM_WORKERS, MAX_NUM_WORKERS, 
+                                    MIN_FILES_PER_WORKER, MAX_FILES_PER_WORKER)
+        
+        layout = QVBoxLayout()
+
+        # Titre et description
+        title_label = QLabel("⚙️ Configuration du Système d'Upload")
+        title_label.setStyleSheet("font-size: 14px; font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(title_label)
+        
+        desc_label = QLabel("Configurez le nombre de workers et de fichiers par worker pour optimiser les performances d'upload.")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #666; margin-bottom: 15px;")
+        layout.addWidget(desc_label)
+
+        # Groupe de configuration des workers
+        workers_group = QGroupBox("👥 Configuration des Workers")
+        workers_layout = QFormLayout()
+
+        # Nombre de workers
+        self.workers_spinbox = QSpinBox()
+        self.workers_spinbox.setRange(MIN_NUM_WORKERS, MAX_NUM_WORKERS)
+        self.workers_spinbox.setValue(self.current_workers)
+        self.workers_spinbox.setSuffix(" workers")
+        self.workers_spinbox.valueChanged.connect(self._update_total_parallel)
+        workers_layout.addRow("Nombre de workers:", self.workers_spinbox)
+
+        # Fichiers par worker
+        self.files_per_worker_spinbox = QSpinBox()
+        self.files_per_worker_spinbox.setRange(MIN_FILES_PER_WORKER, MAX_FILES_PER_WORKER)
+        self.files_per_worker_spinbox.setValue(self.current_files_per_worker)
+        self.files_per_worker_spinbox.setSuffix(" fichiers")
+        self.files_per_worker_spinbox.valueChanged.connect(self._update_total_parallel)
+        workers_layout.addRow("Fichiers par worker:", self.files_per_worker_spinbox)
+
+        workers_group.setLayout(workers_layout)
+        layout.addWidget(workers_group)
+
+        # Groupe d'informations calculées
+        info_group = QGroupBox("📊 Informations Calculées")
+        info_layout = QFormLayout()
+
+        self.total_parallel_label = QLabel()
+        info_layout.addRow("Total uploads parallèles:", self.total_parallel_label)
+
+        self.recommendation_label = QLabel()
+        info_layout.addRow("Recommandation:", self.recommendation_label)
+        
+        # Update labels after both are created
+        self._update_total_parallel()
+
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+
+        # Explication
+        explanation_label = QLabel(
+            "💡 <b>Conseils:</b><br>"
+            "• Plus de workers = plus de parallélisme mais plus de ressources CPU/RAM<br>"
+            "• Plus de fichiers par worker = plus d'uploads simultanés<br>"
+            "• Valeurs recommandées: 2-3 workers avec 5-10 fichiers par worker<br>"
+            "• Pour gros volumes: réduisez les valeurs pour économiser les ressources"
+        )
+        explanation_label.setWordWrap(True)
+        explanation_label.setStyleSheet("background-color: #f0f8ff; padding: 10px; border-radius: 5px; margin: 10px 0;")
+        layout.addWidget(explanation_label)
+
+        # Boutons
+        button_layout = QHBoxLayout()
+        
+        reset_button = QPushButton("🔄 Réinitialiser")
+        reset_button.clicked.connect(self._reset_to_defaults)
+        button_layout.addWidget(reset_button)
+        
+        button_layout.addStretch()
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        button_layout.addWidget(button_box)
+        
+        layout.addLayout(button_layout)
+
+        self.setLayout(layout)
+
+    def _update_total_parallel(self) -> None:
+        """Met à jour le calcul du nombre total d'uploads parallèles"""
+        total = self.workers_spinbox.value() * self.files_per_worker_spinbox.value()
+        self.total_parallel_label.setText(f"<b>{total}</b> fichiers simultanés")
+        
+        # Couleur basée sur la charge
+        if total <= 5:
+            color = "green"
+        elif total <= 15:
+            color = "orange"
+        else:
+            color = "red"
+        
+        self.total_parallel_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+        self._update_recommendation()
+
+    def _update_recommendation(self) -> None:
+        """Met à jour la recommandation basée sur les valeurs actuelles"""
+        total = self.workers_spinbox.value() * self.files_per_worker_spinbox.value()
+        
+        if total <= 5:
+            recommendation = "💚 Léger - Idéal pour préserver les ressources"
+        elif total <= 10:
+            recommendation = "🟡 Modéré - Bon équilibre performance/ressources"
+        elif total <= 15:
+            recommendation = "🟠 Intense - Bonnes performances, ressources élevées"
+        else:
+            recommendation = "🔴 Maximum - Performances maximales, très gourmand"
+            
+        self.recommendation_label.setText(recommendation)
+
+    def _reset_to_defaults(self) -> None:
+        """Remet les valeurs par défaut"""
+        from config.settings import DEFAULT_NUM_WORKERS, DEFAULT_FILES_PER_WORKER
+        
+        self.workers_spinbox.setValue(DEFAULT_NUM_WORKERS)
+        self.files_per_worker_spinbox.setValue(DEFAULT_FILES_PER_WORKER)
+
+    def get_workers_config(self) -> tuple:
+        """
+        Récupère la configuration des workers
+
+        Returns:
+            Tuple (num_workers, files_per_worker)
+        """
+        return (self.workers_spinbox.value(), self.files_per_worker_spinbox.value())
