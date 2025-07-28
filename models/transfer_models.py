@@ -247,7 +247,7 @@ class TransferManager(QObject):
         
         # Throttling pour les signaux UI
         self._last_update_time = {}  # Par transfer_id
-        self._update_interval = 0.05  # Réduit à 0.05s pour des mises à jour très fréquentes des statistiques de dossier
+        self._update_interval = 0.1  # Réduit à 0.05s pour des mises à jour très fréquentes des statistiques de dossier
 
     def generate_transfer_id(self) -> str:
         """Génère un ID unique pour un transfert"""

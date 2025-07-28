@@ -98,14 +98,12 @@ class UploadConfigManager:
     def get_num_workers(self) -> int:
         """Get configured number of workers"""
         config = self.load_config()
-        # return config.get('num_workers', DEFAULT_NUM_WORKERS)
-        return 6
+        return config.get('num_workers', DEFAULT_NUM_WORKERS)
     
     def get_files_per_worker(self) -> int:
         """Get configured files per worker"""
         config = self.load_config()
-        # return config.get('files_per_worker', DEFAULT_FILES_PER_WORKER)
-        return 5
+        return config.get('files_per_worker', DEFAULT_FILES_PER_WORKER)
     
     def update_workers_config(self, num_workers: int, files_per_worker: int) -> bool:
         """

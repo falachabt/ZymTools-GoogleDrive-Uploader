@@ -464,8 +464,8 @@ class UploadConfigDialog(QDialog):
             "• Pour gros volumes: réduisez les valeurs pour économiser les ressources"
         )
         explanation_label.setWordWrap(True)
-        explanation_label.setStyleSheet("background-color: #f0f8ff; padding: 10px; border-radius: 5px; margin: 10px 0;")
-        layout.addWidget(explanation_label)
+        explanation_label.setStyleSheet("background-color: darkGray; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;")
+        # layout.addWidget(explanation_label)
 
         # Boutons
         button_layout = QHBoxLayout()

@@ -400,6 +400,7 @@ class UploadQueue(QObject):
                 file.bytes_transferred = bytes_transferred
                 file.speed = speed
                 
+
                 self.file_updated.emit(unique_id)
     
     def complete_file(self, unique_id: str, uploaded_file_id: str = ""):
@@ -411,6 +412,7 @@ class UploadQueue(QObject):
                 
                 self._transferred_size += file.file_size
                 
+
                 self.file_updated.emit(unique_id)
                 self.queue_statistics_changed.emit()
     
@@ -421,6 +423,7 @@ class UploadQueue(QObject):
                 file = self._files[unique_id]
                 file.fail_upload(error_message)
                 
+
                 self.file_updated.emit(unique_id)
                 self.queue_statistics_changed.emit()
     
@@ -434,6 +437,7 @@ class UploadQueue(QObject):
                 # Count as transferred for progress calculation
                 self._transferred_size += file.file_size
                 
+
                 self.file_updated.emit(unique_id)
                 self.queue_statistics_changed.emit()
     
@@ -575,6 +579,28 @@ class UploadQueue(QObject):
                 
                 # Emit update signal
                 self.folder_updated.emit(folder_path)
+    
+    def _update_single_folder_statistics(self, folder_path: str):
+        """Update statistics for a single folder immediately"""
+        if folder_path in self._folders:
+            folder_info = self._folders[folder_path]
+            
+            # Get all files for this folder
+            folder_files = self.get_files_by_folder(folder_path)
+            
+            # Calculate statistics
+            folder_info.total_files = len(folder_files)
+            folder_info.completed_files = sum(1 for f in folder_files 
+                                             if f.status == FileStatus.COMPLETED)
+            folder_info.failed_files = sum(1 for f in folder_files 
+                                         if f.status == FileStatus.ERROR)
+            folder_info.skipped_files = sum(1 for f in folder_files 
+                                          if f.status == FileStatus.SKIPPED)
+            folder_info.in_progress_files = sum(1 for f in folder_files 
+                                               if f.status == FileStatus.IN_PROGRESS)
+            
+            # Emit update signal immediately
+            self.folder_updated.emit(folder_path)
     
     def clear_completed(self):
         """Remove all completed/failed/skipped files from queue"""
