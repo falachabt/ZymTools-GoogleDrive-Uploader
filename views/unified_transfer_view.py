@@ -30,7 +30,6 @@ class UnifiedTransferView(QWidget):
     clear_completed_requested = pyqtSignal()
     pause_requested = pyqtSignal()
     resume_requested = pyqtSignal()
-    config_changed = pyqtSignal(int, int)  # num_workers, files_per_worker
     
     def __init__(self, upload_manager: UnifiedUploadManager):
         """
@@ -145,11 +144,6 @@ class UnifiedTransferView(QWidget):
         self.clear_btn = QPushButton("🧹 Vider terminés")
         self.clear_btn.clicked.connect(self.clear_completed_requested.emit)
         control_layout.addWidget(self.clear_btn)
-        
-        # Configuration button
-        self.config_btn = QPushButton("⚙️ Configuration")
-        self.config_btn.clicked.connect(self._on_config_clicked)
-        control_layout.addWidget(self.config_btn)
         
         control_layout.addStretch()
         
@@ -613,69 +607,6 @@ class UnifiedTransferView(QWidget):
         else:
             # Start new session
             self.upload_manager.start_upload_session()
-    
-    def _on_config_clicked(self):
-        """Handle configuration button clicked"""
-        try:
-            from views.dialogs import UploadConfigDialog
-            from config.upload_config import upload_config_manager
-            
-            # Get current configuration
-            current_workers = upload_config_manager.get_num_workers()
-            current_files_per_worker = upload_config_manager.get_files_per_worker()
-            
-            print(f"📊 Current config: {current_workers} workers, {current_files_per_worker} files per worker")
-            
-            # Open configuration dialog
-            dialog = UploadConfigDialog(
-                current_workers=current_workers,
-                current_files_per_worker=current_files_per_worker,
-                parent=self
-            )
-            
-            if dialog.exec_() == dialog.Accepted:
-                # Get new configuration
-                num_workers, files_per_worker = dialog.get_workers_config()
-                
-                # Save configuration
-                success = upload_config_manager.update_workers_config(num_workers, files_per_worker)
-                
-                if success:
-                    # Emit signal to notify about configuration change
-                    self.config_changed.emit(num_workers, files_per_worker)
-                    
-                    # Show message to user
-                    from PyQt5.QtWidgets import QMessageBox
-                    QMessageBox.information(
-                        self,
-                        "Configuration sauvegardée",
-                        f"Nouvelle configuration sauvegardée:\n"
-                        f"• {num_workers} workers\n"
-                        f"• {files_per_worker} fichiers par worker\n"
-                        f"• {num_workers * files_per_worker} uploads parallèles total\n\n"
-                        f"Les changements seront appliqués au prochain redémarrage de l'application."
-                    )
-                else:
-                    from PyQt5.QtWidgets import QMessageBox
-                    QMessageBox.warning(
-                        self,
-                        "Erreur de configuration",
-                        "Impossible de sauvegarder la configuration."
-                    )
-            
-        except Exception as e:
-            print(f"❌ Error in configuration dialog: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # Show error message to user
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.critical(
-                self,
-                "Erreur de configuration",
-                f"Erreur lors de l'ouverture du dialogue de configuration:\n\n{str(e)}\n\n"
-                f"Vérifiez que tous les composants sont correctement installés."
-            )
     
     def _on_folder_context_menu(self, position):
         """Handle folder tree context menu"""
