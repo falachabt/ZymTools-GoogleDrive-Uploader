@@ -1795,8 +1795,8 @@ class DriveExplorerMainWindow(QMainWindow):
                 # Try to reinitialize upload manager
                 self.upload_manager = UnifiedUploadManager(
                     drive_client=self.drive_client,
-                    num_workers=2,  # Reduced to prevent rate limiting
-                    files_per_worker=5  # Reduced to prevent rate limiting
+                    num_workers=6,  # Reduced to prevent rate limiting
+                    files_per_worker=6  # Reduced to prevent rate limiting
                 )
                 self._connect_upload_manager_signals()
                 print("✅ Gestionnaire d'upload réinitialisé avec succès")

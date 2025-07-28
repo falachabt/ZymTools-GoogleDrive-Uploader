@@ -389,7 +389,9 @@ class UploadConfigDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("⚙️ Configuration d'Upload")
         self.setModal(True)
-        self.setFixedSize(450, 300)
+        # self.setFixedSize(450, 300)
+
+        self.setSizeGripEnabled(True)
         
         self.current_workers = current_workers
         self.current_files_per_worker = current_files_per_worker
