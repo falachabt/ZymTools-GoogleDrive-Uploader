@@ -19,14 +19,14 @@ from config.settings import (WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT,
                              TOOLBAR_ICON_SIZE, CACHE_CLEANUP_INTERVAL_MS)
 from core.cache_manager import CacheManager
 from core.google_drive_client import GoogleDriveClient
+from threads import DownloadThread
 from threads.file_load_threads import LocalFileLoadThread, DriveFileLoadThread
-from threads.transfer_threads import UploadThread, FolderUploadThread, DownloadThread, SafeFolderUploadThread
 from models.file_models import FileListModel, LocalFileModel
-from models.transfer_models import  TransferManager
+from models.unified_upload_manager import UnifiedUploadManager
 from views.tree_views import LocalTreeView, DriveTreeView
 from views.dialogs import (SearchDialog, FileDetailsDialog, RenameDialog,
                            CreateFolderDialog, ConfirmationDialog, ErrorDialog)
-from views.transfer_view import  TransferPanel
+from views.unified_transfer_view import UnifiedTransferView
 from utils.helpers import (format_file_size, get_file_emoji, get_file_type_description,
                            format_date, sanitize_filename)
 
@@ -37,14 +37,6 @@ class DriveExplorerMainWindow(QMainWindow):
     def __init__(self):
         """Initialise la fenêtre principale"""
         super().__init__()
-
-        # Paramètres de sécurité
-        self.MAX_PARALLEL_UPLOADS = 1
-        self.SAFE_MODE = True
-
-        self.transfer_manager = TransferManager()
-
-
 
         # Initialiser les composants principaux
         self.setup_core_components()
@@ -69,6 +61,10 @@ class DriveExplorerMainWindow(QMainWindow):
 
     def setup_core_components(self) -> None:
         """Initialise les composants principaux"""
+        # Initialize configuration attributes
+        self.SAFE_MODE = True  # Default to safe mode
+        self.MAX_PARALLEL_UPLOADS = 1 if self.SAFE_MODE else 2
+        
         # Gestionnaire de cache
         self.cache_manager = CacheManager(max_age_minutes=10)
 
@@ -82,9 +78,14 @@ class DriveExplorerMainWindow(QMainWindow):
         self.connected = False
         self.connect_to_drive()
 
-        # Threads de chargement et transfert
+        # NEW: Unified Upload Manager (initialized in connect_to_drive)
+        self.upload_manager = None
+
+        # Threads de chargement
         self.local_load_thread = None
         self.drive_load_thread = None
+        
+        # Legacy thread lists (for backward compatibility with remaining old code)
         self.upload_threads = []
         self.download_threads = []
         self.folder_upload_threads = []
@@ -92,12 +93,126 @@ class DriveExplorerMainWindow(QMainWindow):
     def connect_to_drive(self) -> None:
         """Connecte à Google Drive"""
         try:
+            # Reset upload manager state
+            self.upload_manager = None
+            
+            # Initialize Google Drive client
             self.drive_client = GoogleDriveClient()
             self.connected = True
             print("✅ Connexion à Google Drive réussie")
+            
+            # Initialize upload manager now that we have a client
+            try:
+                # Try to import required components first
+                from models.unified_upload_manager import UnifiedUploadManager
+                from models.upload_queue import UploadQueue
+                from threads.queue_workers import WorkerManager
+                from config.upload_config import upload_config_manager
+
+                print("📦 Modules de gestionnaire d'upload importés avec succès")
+                
+                # Load upload configuration
+                num_workers = upload_config_manager.get_num_workers()
+                files_per_worker = upload_config_manager.get_files_per_worker()
+
+                self.upload_manager = UnifiedUploadManager(
+                    drive_client=self.drive_client,
+                    num_workers=num_workers,
+                    files_per_worker=files_per_worker
+                )
+                self._connect_upload_manager_signals()
+                print(f"✅ Gestionnaire d'upload initialisé avec succès ({num_workers} workers, {files_per_worker} fichiers/worker)")
+                
+            except ImportError as import_error:
+                print(f"❌ Erreur d'importation pour le gestionnaire d'upload: {import_error}")
+                self.upload_manager = None
+                # Keep connected to Drive but disable upload functionality
+
+            except Exception as upload_error:
+                print(f"❌ Erreur lors de l'initialisation du gestionnaire d'upload: {upload_error}")
+                import traceback
+                traceback.print_exc()
+                self.upload_manager = None
+                # Keep connected to Drive but disable upload functionality
+                
         except Exception as e:
             self.connected = False
+            self.upload_manager = None
             print(f"❌ Erreur de connexion à Google Drive: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _connect_upload_manager_signals(self):
+        """Connect upload manager signals to UI"""
+        if not self.upload_manager:
+            return
+            
+        # Status signals
+        self.upload_manager.status_message.connect(self._on_upload_status_message)
+        self.upload_manager.error_occurred.connect(self._on_upload_error)
+        
+        # Progress signals
+        self.upload_manager.upload_progress.connect(self._on_upload_progress)
+        self.upload_manager.scanning_progress.connect(self._on_scanning_progress)
+        
+        # Session signals
+        self.upload_manager.upload_session_started.connect(self._on_upload_session_started)
+        self.upload_manager.upload_session_completed.connect(self._on_upload_session_completed)
+        self.upload_manager.upload_session_paused.connect(self._on_upload_session_paused)
+        self.upload_manager.upload_session_resumed.connect(self._on_upload_session_resumed)
+
+    def retry_upload_manager_initialization(self) -> bool:
+        """
+        Retry initialization of upload manager
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.connected or not self.drive_client:
+            print("❌ Pas de connexion Google Drive pour réinitialiser le gestionnaire d'upload")
+            return False
+
+        try:
+            # Try to import required components first
+            from models.unified_upload_manager import UnifiedUploadManager
+            from models.upload_queue import UploadQueue
+            from threads.queue_workers import WorkerManager
+            from config.upload_config import upload_config_manager
+
+            print("📦 Ré-importation des modules de gestionnaire d'upload...")
+
+            # Cleanup existing manager if any
+            if hasattr(self, 'upload_manager') and self.upload_manager:
+                try:
+                    self.upload_manager.stop_upload_session()
+                    self.upload_manager.deleteLater()
+                except:
+                    pass
+
+            # Load upload configuration
+            num_workers = upload_config_manager.get_num_workers()
+            files_per_worker = upload_config_manager.get_files_per_worker()
+            
+            self.upload_manager = UnifiedUploadManager(
+                drive_client=self.drive_client,
+                num_workers=num_workers,
+                files_per_worker=files_per_worker
+            )
+            self._connect_upload_manager_signals()
+            print(f"✅ Gestionnaire d'upload réinitialisé avec succès ({num_workers} workers, {files_per_worker} fichiers/worker)")
+
+            # Update transfer panel if it exists
+            if hasattr(self, 'transfer_panel') and hasattr(self.transfer_panel, 'set_upload_manager'):
+                self.transfer_panel.set_upload_manager(self.upload_manager)
+
+            return True
+
+        except Exception as e:
+            print(f"❌ Échec de la réinitialisation du gestionnaire d'upload: {e}")
+            import traceback
+            traceback.print_exc()
+            self.upload_manager = None
+            return False
 
     def setup_ui(self) -> None:
         """Configure l'interface utilisateur avec onglets"""
@@ -119,9 +234,32 @@ class DriveExplorerMainWindow(QMainWindow):
         self.explorer_tab = self.create_explorer_tab()
         self.tab_widget.addTab(self.explorer_tab, "📂 Explorateur")
 
-        # Onglet 2: Gestionnaire de transferts
-        self.transfer_panel = TransferPanel(self.transfer_manager)
-        self.tab_widget.addTab(self.transfer_panel, "📋 Transferts")
+        # Onglet 2: Gestionnaire de transferts (nouvelle architecture)  
+        try:
+            # If upload manager failed to initialize, show a special message
+            if self.connected and not self.upload_manager:
+                # Connected to Drive but upload manager failed - show retry option
+                self.transfer_panel = self._create_upload_manager_error_widget()
+                self.tab_widget.addTab(self.transfer_panel, "📋 Transferts (Non disponible)")
+                print("⚠️ Transfer panel created with upload manager error widget")
+            else:
+                # Normal transfer panel (upload_manager could be None if not connected)
+                self.transfer_panel = UnifiedTransferView(self.upload_manager)
+                tab_title = "📋 Transferts" if self.upload_manager else "📋 Transferts (Non connecté)"
+                self.tab_widget.addTab(self.transfer_panel, tab_title)
+                print("✅ Transfer panel created successfully")
+                
+        except Exception as e:
+            print(f"❌ Error creating transfer panel: {e}")
+            # Create a fallback widget
+            fallback_widget = QWidget()
+            fallback_layout = QVBoxLayout(fallback_widget)
+            error_label = QLabel(f"Erreur lors de la création du panneau de transfert:\n{str(e)}")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setStyleSheet("color: red; padding: 20px;")
+            fallback_layout.addWidget(error_label)
+            self.tab_widget.addTab(fallback_widget, "📋 Transferts (Erreur)")
+            self.transfer_panel = None
 
         # Connecter le signal de changement d'onglet
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
@@ -303,12 +441,7 @@ class DriveExplorerMainWindow(QMainWindow):
 
         self.toolbar.addSeparator()
 
-        self.safe_mode_action = QAction("🛡️ Mode sécurisé", self)
-        self.safe_mode_action.setCheckable(True)
-        self.safe_mode_action.setChecked(self.SAFE_MODE)
-        self.safe_mode_action.setToolTip("Basculer entre mode sécurisé et rapide pour les uploads")
-        self.safe_mode_action.triggered.connect(self.toggle_safe_mode)
-        self.toolbar.addAction(self.safe_mode_action)
+
 
         self.addToolBar(self.toolbar)
         self.update_toolbar_state()
@@ -332,13 +465,24 @@ class DriveExplorerMainWindow(QMainWindow):
     def on_tab_changed(self, index: int) -> None:
         """Appelé quand l'onglet change"""
         if index == 1:  # Onglet Transferts
-            # Mettre à jour le titre de l'onglet avec le nombre de transferts
-            transfer_count = len(self.transfer_manager.get_all_transfers())
-            active_count = len(self.transfer_manager.get_active_transfers())
-            if active_count > 0:
-                self.tab_widget.setTabText(1, f"📋 Transferts ({active_count} actifs)")
-            else:
-                self.tab_widget.setTabText(1, f"📋 Transferts ({transfer_count})")
+            try:
+                # Mettre à jour le titre de l'onglet avec le nombre de transferts
+                if self.upload_manager and hasattr(self.upload_manager, 'get_queue_statistics'):
+                    stats = self.upload_manager.get_queue_statistics()
+                    total_files = stats.get('total_files', 0)
+                    active_files = stats.get('active_files', 0)
+                    
+                    if active_files > 0:
+                        self.tab_widget.setTabText(1, f"📋 Transferts ({active_files} actifs)")
+                    elif total_files > 0:
+                        self.tab_widget.setTabText(1, f"📋 Transferts ({total_files})")
+                    else:
+                        self.tab_widget.setTabText(1, "📋 Transferts")
+                else:
+                    self.tab_widget.setTabText(1, "📋 Transferts")
+            except Exception as e:
+                print(f"❌ Error updating transfer tab title: {e}")
+                self.tab_widget.setTabText(1, "📋 Transferts")
 
     def show_transfers_tab(self) -> None:
         """Affiche l'onglet des transferts"""
@@ -359,25 +503,71 @@ class DriveExplorerMainWindow(QMainWindow):
         self.drive_view.local_files_dropped.connect(self.handle_drive_files_dropped)
 
     def connect_transfer_signals(self) -> None:
-        """Connecte les signaux du panneau de transferts"""
-        self.transfer_panel.cancel_transfer_requested.connect(self.cancel_transfer)
-        self.transfer_panel.pause_transfer_requested.connect(self.pause_transfer)
-        self.transfer_panel.resume_transfer_requested.connect(self.resume_transfer)
+        """Connecte les signaux du panneau de transferts unifié"""
+        if not self.transfer_panel:
+            return
+            
+        # Only connect signals if transfer_panel is actually a UnifiedTransferView
+        # (not a fallback QWidget when upload manager failed to initialize)
+        from views.unified_transfer_view import UnifiedTransferView
+        if isinstance(self.transfer_panel, UnifiedTransferView):
+            # Connect new unified transfer panel signals
+            self.transfer_panel.retry_file_requested.connect(self._retry_single_file)
+            self.transfer_panel.retry_all_requested.connect(self._retry_all_files)
+            self.transfer_panel.clear_completed_requested.connect(self._clear_completed_files)
+            self.transfer_panel.pause_requested.connect(self._pause_uploads)
+            self.transfer_panel.resume_requested.connect(self._resume_uploads)
+            self.transfer_panel.config_changed.connect(self._on_upload_config_changed)
+        else:
+            print("⚠️ Transfer panel is not UnifiedTransferView, skipping signal connections")
 
-        # Connecter les signaux du transfer_manager pour mettre à jour l'onglet
-        self.transfer_manager.transfer_added.connect(self.update_transfer_tab_title)
-        self.transfer_manager.transfer_removed.connect(self.update_transfer_tab_title)
-        self.transfer_manager.transfer_status_changed.connect(self.update_transfer_tab_title)
+    def _retry_single_file(self, file_unique_id: str):
+        """Retry a single file"""
+        if self.upload_manager:
+            success = self.upload_manager.retry_file(file_unique_id)
+            if success:
+                self.status_bar.showMessage("🔄 Fichier en cours de retry", 2000)
+            else:
+                self.status_bar.showMessage("⚠️ Impossible de réessayer ce fichier", 2000)
+
+    def _retry_all_files(self):
+        """Retry all failed files"""
+        if self.upload_manager:
+            retry_count = self.upload_manager.retry_failed_files()
+            if retry_count > 0:
+                self.status_bar.showMessage(f"🔄 {retry_count} fichier(s) en cours de retry", 3000)
+            else:
+                self.status_bar.showMessage("⚠️ Aucun fichier à réessayer", 2000)
+
+    def _clear_completed_files(self):
+        """Clear completed files"""
+        if self.upload_manager:
+            self.upload_manager.clear_completed_files()
+            self.status_bar.showMessage("🧹 Fichiers terminés supprimés", 2000)
+
+    def _pause_uploads(self):
+        """Pause upload session"""
+        if self.upload_manager:
+            self.upload_manager.pause_upload_session()
+
+    def _resume_uploads(self):
+        """Resume upload session"""
+        if self.upload_manager:
+            self.upload_manager.resume_upload_session()
 
     def update_transfer_tab_title(self, *args) -> None:
         """Met à jour le titre de l'onglet transferts"""
-        transfer_count = len(self.transfer_manager.get_all_transfers())
-        active_count = len(self.transfer_manager.get_active_transfers())
+        if not self.upload_manager:
+            return
+            
+        stats = self.upload_manager.get_queue_statistics()
+        total_files = stats.get('total_files', 0)
+        active_files = stats.get('in_progress', 0)
 
-        if active_count > 0:
-            title = f"📋 Transferts ({active_count} actifs)"
-        elif transfer_count > 0:
-            title = f"📋 Transferts ({transfer_count})"
+        if active_files > 0:
+            title = f"📋 Transferts ({active_files} actifs)"
+        elif total_files > 0:
+            title = f"📋 Transferts ({total_files})"
         else:
             title = "📋 Transferts"
 
@@ -827,47 +1017,68 @@ class DriveExplorerMainWindow(QMainWindow):
                                if os.path.isdir(os.path.join(self.local_model.current_path, name)))
 
             if folder_count > 0:
-                # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 10
+                # Optimisé pour de gros volumes: moins de parallélisme par dossier
+                # mais permet plusieurs dossiers simultanés
+                upload_mode = 5  # Réduit de 30 à 5 pour éviter la surcharge
                 if upload_mode is None:
                     return  # Annulé
             else:
                 upload_mode = 1  # Séquentiel pour les fichiers simples
 
+            # Use new unified upload system instead of old threads
+            if not self.connected:
+                ErrorDialog.show_error("❌ Non connecté", "Connexion Google Drive requise", parent=self)
+                return
+            
+            if not self.upload_manager:
+                ErrorDialog.show_error(
+                    "❌ Gestionnaire d'upload non disponible", 
+                    "Le gestionnaire d'upload n'a pas pu être initialisé.\n"
+                    "Essayez de vous reconnecter à Google Drive via le menu Outils > Reconnexion.",
+                    parent=self
+                )
+                return
+
+            files_to_upload = []
+            folders_to_upload = []
+
+            # Separate files and folders
             for row, name in items_to_upload:
                 item_path = os.path.join(self.local_model.current_path, name)
 
                 if os.path.isfile(item_path):
-                    # Upload de fichier simple (toujours sécurisé)
-                    upload_thread = UploadThread(
-                        self.drive_client, item_path, destination_id,
-                        is_shared_drive, self.transfer_manager
-                    )
-                    upload_thread.progress_signal.connect(self.update_progress)
-                    upload_thread.completed_signal.connect(self.upload_completed)
-                    upload_thread.error_signal.connect(self.upload_error)
-                    upload_thread.status_signal.connect(self.update_status)
-                    upload_thread.time_signal.connect(self.update_upload_time)
-                    self.upload_threads.append(upload_thread)
-                    upload_thread.start()
-
+                    files_to_upload.append(item_path)
                 elif os.path.isdir(item_path):
-                    # Upload de dossier sécurisé
-                    folder_upload_thread = SafeFolderUploadThread(
-                        self.drive_client, item_path, destination_id,
-                        is_shared_drive, self.transfer_manager,
-                        max_parallel_uploads=upload_mode  # Mode choisi par l'utilisateur
-                    )
-                    folder_upload_thread.progress_signal.connect(self.update_progress)
-                    folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
-                    folder_upload_thread.error_signal.connect(self.upload_error)
-                    folder_upload_thread.status_signal.connect(self.update_status)
-                    folder_upload_thread.time_signal.connect(self.update_upload_time)
-                    self.folder_upload_threads.append(folder_upload_thread)
-                    folder_upload_thread.start()
+                    folders_to_upload.append(item_path)
 
-            # Afficher l'onglet des transferts
-            self.show_transfers_tab()
+            # Add files to upload queue
+            if files_to_upload:
+                print(f"📁 Adding {len(files_to_upload)} files to upload queue")
+                files_added = self.upload_manager.add_files(files_to_upload, destination_id, is_shared_drive)
+                if files_added > 0:
+                    self.status_bar.showMessage(f"✅ {files_added} fichier(s) ajouté(s) à la file d'upload", 3000)
+                else:
+                    self.status_bar.showMessage("⚠️ Aucun fichier valide à uploader", 3000)
+
+            # Add folders to upload queue
+            if folders_to_upload:
+                if len(folders_to_upload) == 1:
+                    print(f"📁 Adding folder {folders_to_upload[0]} to upload queue")
+                    success = self.upload_manager.add_folder(folders_to_upload[0], destination_id, is_shared_drive)
+                    success_count = 1 if success else 0
+                else:
+                    print(f"📁 Adding {len(folders_to_upload)} folders to upload queue")
+                    success = self.upload_manager.add_folders(folders_to_upload, destination_id, is_shared_drive)
+                    success_count = len(folders_to_upload) if success else 0
+                
+                if success_count > 0:
+                    self.status_bar.showMessage(f"✅ {success_count} dossier(s) ajouté(s) à la file d'upload", 3000)
+                else:
+                    self.status_bar.showMessage("⚠️ Erreur lors de l'ajout des dossiers", 3000)
+
+            # Show transfers tab if anything was added
+            if (files_to_upload and files_added > 0) or (folders_to_upload and success_count > 0):
+                self.show_transfers_tab()
 
         except Exception as e:
             print(f"Erreur dans upload_selected_files: {e}")
@@ -980,7 +1191,7 @@ class DriveExplorerMainWindow(QMainWindow):
             for row, name, file_id, file_size in files_to_download:
                 download_thread = DownloadThread(
                     self.drive_client, file_id, name, destination_dir,
-                    file_size, self.transfer_manager
+                    file_size, None  # Download doesn't need transfer manager for now
                 )
                 download_thread.progress_signal.connect(self.update_progress)
                 download_thread.completed_signal.connect(self.download_completed)
@@ -1524,6 +1735,106 @@ class DriveExplorerMainWindow(QMainWindow):
             self.status_bar.showMessage("🔌 Déconnecté de Google Drive", 3000)
             self.update_toolbar_state()
 
+    def _create_upload_manager_error_widget(self) -> QWidget:
+        """Create a widget to show when upload manager initialization failed"""
+        error_widget = QWidget()
+        error_layout = QVBoxLayout(error_widget)
+        
+        # Title
+        title_label = QLabel("❌ Gestionnaire d'upload non disponible")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #ff6b6b; padding: 10px;")
+        error_layout.addWidget(title_label)
+        
+        # Message
+        message_label = QLabel(
+            "Le gestionnaire d'upload n'a pas pu être initialisé.\n"
+            "Vous êtes connecté à Google Drive mais les transferts ne sont pas disponibles.\n\n"
+            "Essayez de vous reconnecter pour résoudre le problème."
+        )
+        message_label.setAlignment(Qt.AlignCenter)
+        message_label.setStyleSheet("padding: 20px; color: #666;")
+        message_label.setWordWrap(True)
+        error_layout.addWidget(message_label)
+        
+        # Retry button
+        retry_button = QPushButton("🔄 Réessayer la connexion")
+        retry_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        retry_button.clicked.connect(self.reinitialize_upload_manager)
+        
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(retry_button)
+        button_layout.addStretch()
+        error_layout.addLayout(button_layout)
+        
+        error_layout.addStretch()
+        
+        return error_widget
+    
+    def reinitialize_upload_manager(self):
+        """Reinitialize the upload manager after connection issues"""
+        try:
+            if not self.connected or not self.drive_client:
+                # Reconnect to Drive first
+                self.connect_to_drive()
+            
+            if self.connected and not self.upload_manager:
+                # Try to reinitialize upload manager
+                self.upload_manager = UnifiedUploadManager(
+                    drive_client=self.drive_client,
+                    num_workers=6,  # Reduced to prevent rate limiting
+                    files_per_worker=6  # Reduced to prevent rate limiting
+                )
+                self._connect_upload_manager_signals()
+                print("✅ Gestionnaire d'upload réinitialisé avec succès")
+                
+                # Update transfer tab
+                self._update_transfer_tab()
+                self.status_bar.showMessage("✅ Gestionnaire d'upload réinitialisé", 3000)
+                
+            elif not self.connected:
+                self.status_bar.showMessage("❌ Impossible de se connecter à Google Drive", 3000)
+            else:
+                self.status_bar.showMessage("✅ Gestionnaire d'upload déjà fonctionnel", 2000)
+                
+        except Exception as e:
+            print(f"❌ Erreur lors de la réinitialisation: {e}")
+            self.status_bar.showMessage(f"❌ Erreur de réinitialisation: {str(e)}", 5000)
+    
+    def _update_transfer_tab(self):
+        """Update the transfer tab after upload manager reinitialization"""
+        try:
+            # Remove the current transfer tab
+            transfer_tab_index = 1  # Second tab
+            if transfer_tab_index < self.tab_widget.count():
+                self.tab_widget.removeTab(transfer_tab_index)
+            
+            # Recreate the transfer panel
+            if self.upload_manager:
+                self.transfer_panel = UnifiedTransferView(self.upload_manager)
+                self.tab_widget.insertTab(transfer_tab_index, self.transfer_panel, "📋 Transferts")
+                self.connect_transfer_signals()  # Reconnect signals
+            else:
+                # Still not available
+                error_widget = self._create_upload_manager_error_widget()
+                self.tab_widget.insertTab(transfer_tab_index, error_widget, "📋 Transferts (Non disponible)")
+                
+        except Exception as e:
+            print(f"❌ Erreur lors de la mise à jour de l'onglet transfert: {e}")
+
     def reconnect_to_drive(self) -> None:
         """Se reconnecte à Google Drive"""
         self.connect_to_drive()
@@ -1536,7 +1847,22 @@ class DriveExplorerMainWindow(QMainWindow):
             except Exception as e:
                 print(f"Erreur lors du chargement des Shared Drives: {e}")
             self.refresh_drive_files()
-            self.status_bar.showMessage("🔗 Reconnecté à Google Drive", 3000)
+            
+            # If upload manager wasn't initialized, try again
+            if not self.upload_manager:
+                print("🔄 Tentative de réinitialisation du gestionnaire d'upload...")
+                if self.retry_upload_manager_initialization():
+                    print("✅ Gestionnaire d'upload réinitialisé avec succès")
+                else:
+                    print("❌ Échec de la réinitialisation du gestionnaire d'upload")
+
+            # Update transfer tab based on upload manager status
+            self._update_transfer_tab()
+            
+            status_msg = "🔗 Reconnecté à Google Drive"
+            if not self.upload_manager:
+                status_msg += " (Gestionnaire d'upload non disponible)"
+            self.status_bar.showMessage(status_msg, 3000)
         self.update_toolbar_state()
 
     # ==================== CALLBACKS POUR LES THREADS ====================
@@ -1656,58 +1982,53 @@ class DriveExplorerMainWindow(QMainWindow):
             ErrorDialog.show_error("❌ Erreur", f"Erreur lors du glisser-déposer: {str(e)}", parent=self)
 
     def upload_files_list(self, file_paths):
-        """Upload une liste de fichiers/dossiers vers Google Drive (version sécurisée)"""
+        """Upload une liste de fichiers/dossiers vers Google Drive (nouvelle architecture unifiée)"""
         try:
             if not self.connected:
+                ErrorDialog.show_error("❌ Non connecté", "Connexion Google Drive requise", parent=self)
+                return
+                
+            if not self.upload_manager:
+                ErrorDialog.show_error(
+                    "❌ Gestionnaire d'upload non disponible", 
+                    "Le gestionnaire d'upload n'a pas pu être initialisé.\n"
+                    "Essayez de vous reconnecter à Google Drive via le menu Outils > Reconnexion.",
+                    parent=self
+                )
                 return
 
             destination_id = self.drive_model.current_path_id
             is_shared_drive = self.drive_client.is_shared_drive(self.drive_model.current_drive_id)
 
-            # Compter les dossiers pour choisir le mode
-            folder_count = sum(1 for path in file_paths if os.path.isdir(path))
+            # Séparer fichiers et dossiers
+            files = [path for path in file_paths if os.path.isfile(path)]
+            folders = [path for path in file_paths if os.path.isdir(path)]
 
-            if folder_count > 0:
-                # upload_mode = self.choose_upload_mode(folder_count)
-                upload_mode = 10
-                if upload_mode is None:
-                    return  # Annulé
-            else:
-                upload_mode = 1  # Séquentiel pour les fichiers simples
+            total_items = len(files) + len(folders)
+            
+            # Add individual files
+            if files:
+                files_added = self.upload_manager.add_files(files, destination_id, is_shared_drive)
+                print(f"📁 {files_added} fichiers ajoutés à la file d'upload")
 
-            for file_path in file_paths:
-                if os.path.isfile(file_path):
-                    upload_thread = UploadThread(
-                        self.drive_client, file_path, destination_id,
-                        is_shared_drive, self.transfer_manager
-                    )
-                    upload_thread.progress_signal.connect(self.update_progress)
-                    upload_thread.completed_signal.connect(self.upload_completed)
-                    upload_thread.error_signal.connect(self.upload_error)
-                    upload_thread.status_signal.connect(self.update_status)
-                    upload_thread.time_signal.connect(self.update_upload_time)
-                    self.upload_threads.append(upload_thread)
-                    upload_thread.start()
+            # Add folders (this will scan and add all files within)
+            if folders:
+                if len(folders) == 1:
+                    # Single folder
+                    success = self.upload_manager.add_folder(folders[0], destination_id, is_shared_drive)
+                    if success:
+                        print(f"📁 Dossier en cours de scan: {os.path.basename(folders[0])}")
+                else:
+                    # Multiple folders
+                    success = self.upload_manager.add_folders(folders, destination_id, is_shared_drive)
+                    if success:
+                        print(f"📁 {len(folders)} dossiers en cours de scan")
 
-                elif os.path.isdir(file_path):
-                    folder_upload_thread = SafeFolderUploadThread(
-                        self.drive_client, file_path, destination_id,
-                        is_shared_drive, self.transfer_manager,
-                        max_parallel_uploads=upload_mode
-                    )
-                    folder_upload_thread.progress_signal.connect(self.update_progress)
-                    folder_upload_thread.completed_signal.connect(self.folder_upload_completed)
-                    folder_upload_thread.error_signal.connect(self.upload_error)
-                    folder_upload_thread.status_signal.connect(self.update_status)
-                    folder_upload_thread.time_signal.connect(self.update_upload_time)
-                    self.folder_upload_threads.append(folder_upload_thread)
-                    folder_upload_thread.start()
-
-            # Afficher l'onglet des transferts
+            # Show transfer panel
             self.show_transfers_tab()
 
-            mode_text = "sécurisé" if upload_mode == 1 else "rapide"
-            self.status_bar.showMessage(f"🚀 Upload de {len(file_paths)} élément(s) en mode {mode_text}...")
+            # Show success message
+            self.status_bar.showMessage(f"🚀 {total_items} élément(s) ajouté(s) à la file d'upload", 3000)
 
         except Exception as e:
             print(f"Erreur dans upload_files_list: {e}")
@@ -1741,10 +2062,33 @@ class DriveExplorerMainWindow(QMainWindow):
         # Pour l'instant, juste mettre à jour le statut
         pass
 
+    def retry_failed_files(self, transfer_id: str = None) -> None:
+        """Réessaie les fichiers échoués (utilise le nouveau gestionnaire unifié)"""
+        if not self.upload_manager:
+            self.status_bar.showMessage("⚠️ Gestionnaire d'upload non disponible", 3000)
+            return
+            
+        try:
+            retry_count = self.upload_manager.retry_failed_files()
+            if retry_count > 0:
+                self.status_bar.showMessage(f"🔄 {retry_count} fichier(s) relancé(s)", 3000)
+            else:
+                self.status_bar.showMessage("⚠️ Aucun fichier en erreur à réessayer", 3000)
+        except Exception as e:
+            self.status_bar.showMessage(f"❌ Erreur lors du retry: {str(e)}", 5000)
+
+
     def clear_completed_transfers(self) -> None:
-        """Supprime tous les transferts terminés"""
-        self.transfer_manager.clear_completed_transfers()
-        self.status_bar.showMessage("🧹 Transferts terminés supprimés", 2000)
+        """Supprime tous les transferts terminés (utilise le nouveau gestionnaire unifié)"""
+        if not self.upload_manager:
+            self.status_bar.showMessage("⚠️ Gestionnaire d'upload non disponible", 3000)
+            return
+            
+        try:
+            self.upload_manager.clear_completed_files()
+            self.status_bar.showMessage("🧹 Transferts terminés supprimés", 2000)
+        except Exception as e:
+            self.status_bar.showMessage(f"❌ Erreur lors du nettoyage: {str(e)}", 3000)
 
     # === MÉTHODES UTILITAIRES ===
 
@@ -1780,3 +2124,64 @@ class DriveExplorerMainWindow(QMainWindow):
             return int(value * multipliers.get(unit, 1))
         except:
             return 0
+
+    # === NEW UNIFIED UPLOAD MANAGER SIGNAL HANDLERS ===
+    
+    def _on_upload_status_message(self, message: str):
+        """Handle status message from upload manager"""
+        self.status_bar.showMessage(message, 3000)
+    
+    def _on_upload_error(self, title: str, message: str):
+        """Handle error from upload manager"""
+        ErrorDialog.show_error(title, message, parent=self)
+    
+    def _on_upload_progress(self, stats: dict):
+        """Handle upload progress statistics"""
+        # Update any progress indicators in UI
+        # This is called every second with current statistics
+        pass
+    
+    def _on_scanning_progress(self, folder_path: str, current: int, total: int):
+        """Handle folder scanning progress"""
+        folder_name = os.path.basename(folder_path)
+        progress_pct = int((current / total) * 100) if total > 0 else 0
+        self.status_bar.showMessage(f"🔍 Scan {folder_name}: {progress_pct}% ({current}/{total})", 1000)
+    
+    def _on_upload_session_started(self):
+        """Handle upload session started"""
+        print("🚀 Session d'upload démarrée avec la nouvelle architecture")
+    
+    def _on_upload_session_completed(self):
+        """Handle upload session completed"""
+        print("🎉 Session d'upload terminée")
+    
+    def _on_upload_session_paused(self):
+        """Handle upload session paused"""
+        print("⏸️ Session d'upload suspendue")
+    
+    def _on_upload_session_resumed(self):
+        """Handle upload session resumed"""
+        print("▶️ Session d'upload reprise")
+    
+    def _on_upload_config_changed(self, num_workers: int, files_per_worker: int):
+        """Handle upload configuration change"""
+        print(f"⚙️ Configuration d'upload modifiée: {num_workers} workers, {files_per_worker} fichiers/worker")
+        # Configuration is already saved by the dialog, 
+        # changes will be applied on next application restart
+
+    # === LEGACY TRANSFER METHODS (to be updated/removed) ===
+    
+    def retry_failed_files(self, transfer_id: str = None) -> None:
+        """Retry failed files using new unified system"""
+        if self.upload_manager:
+            retry_count = self.upload_manager.retry_failed_files()
+            if retry_count > 0:
+                self.status_bar.showMessage(f"🔄 {retry_count} fichier(s) en cours de retry", 3000)
+            else:
+                self.status_bar.showMessage("⚠️ Aucun fichier à réessayer", 3000)
+    
+    def clear_completed_transfers(self) -> None:
+        """Clear completed transfers using new unified system"""
+        if self.upload_manager:
+            self.upload_manager.clear_completed_files()
+            self.status_bar.showMessage("🧹 Transferts terminés supprimés", 2000)

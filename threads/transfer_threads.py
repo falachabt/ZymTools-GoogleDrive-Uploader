@@ -232,8 +232,8 @@ class SafeFolderUploadThread(QThread):
         self.parent_id = parent_id
         self.is_shared_drive = is_shared_drive
         self.transfer_manager = transfer_manager
-        # Limiter à un maximum sécurisé
-        self.max_parallel_uploads = max(max_parallel_uploads, 30)
+        # Limiter à un maximum sécurisé pour des performances optimales
+        self.max_parallel_uploads = min(max_parallel_uploads, 10)  # Maximum 10 au lieu de 30
         self.total_files = 0
         self.uploaded_files = 0
         self.failed_files = 0
@@ -265,7 +265,7 @@ class SafeFolderUploadThread(QThread):
         return count, total_size
 
     def collect_all_files(self, folder_path: str) -> List[Dict[str, Any]]:
-        """Collecte tous les fichiers de manière récursive"""
+        """Collecte tous les fichiers de manière récursive et les ajoute au TransferManager"""
         files_to_process = []
 
         try:
@@ -276,12 +276,26 @@ class SafeFolderUploadThread(QThread):
                     if not file.lower().endswith('.tif'):
                         file_path = os.path.join(root, file)
                         if os.path.exists(file_path):
-                            files_to_process.append({
+                            file_info = {
                                 'file_path': file_path,
                                 'file_name': file,
                                 'relative_dir': rel_path if rel_path != '.' else '',
                                 'size': os.path.getsize(file_path)
-                            })
+                            }
+                            files_to_process.append(file_info)
+                            
+                            # Créer un FileTransferItem et l'ajouter au transfert
+                            if self.transfer_manager and self.transfer_id:
+                                from models.transfer_models import FileTransferItem
+                                file_item = FileTransferItem(
+                                    file_path=file_path,
+                                    file_name=file,
+                                    file_size=file_info['size'],
+                                    relative_path=rel_path if rel_path != '.' else '',
+                                    destination_folder_id=""  # Sera mis à jour plus tard
+                                )
+                                self.transfer_manager.add_file_to_transfer(self.transfer_id, file_item)
+                                
         except Exception as e:
             print(f"Erreur lors de la collecte des fichiers: {e}")
 
@@ -348,7 +362,7 @@ class SafeFolderUploadThread(QThread):
         results = []
 
         def upload_single_file_safe(file_info):
-            """Upload sécurisé d'un seul fichier"""
+            """Upload sécurisé d'un seul fichier avec tracking individuel"""
             try:
                 with QMutexLocker(self.cancelled_mutex):
                     if self.is_cancelled:
@@ -356,15 +370,56 @@ class SafeFolderUploadThread(QThread):
 
                 # Déterminer le dossier parent
                 parent_id = folder_mapping.get(file_info['relative_dir'], self.parent_id)
-
-                # Status update
+                file_path = file_info['file_path']
                 file_name = file_info['file_name']
+
+                # Mettre à jour le statut du fichier dans le transfer manager
+                if self.transfer_manager and self.transfer_id:
+                    self.transfer_manager.update_file_status_in_transfer(
+                        self.transfer_id, file_path, TransferStatus.IN_PROGRESS
+                    )
+                
+                # Tracking du temps pour calculer la vitesse
+                start_time = time.time()
+
+                # Vérifier si le fichier existe déjà sur Drive
+                if already_exists_in_folder(SafeGoogleDriveUploader.get_fresh_client(), parent_id, file_name):
+                    if self.transfer_manager and self.transfer_id:
+                        self.transfer_manager.update_file_status_in_transfer(
+                            self.transfer_id, file_path, TransferStatus.COMPLETED
+                        )
+                        # Marquer le fichier comme existant
+                        transfer = self.transfer_manager.get_transfer(self.transfer_id)
+                        if transfer and file_path in transfer.child_files:
+                            transfer.child_files[file_path].exists_on_drive = True
+                    
+                    return {
+                        'success': True,
+                        'file_id': 'existing',
+                        'file_info': file_info,
+                        'skipped': True
+                    }
 
                 # Upload sécurisé avec retry
                 file_id = SafeGoogleDriveUploader.safe_upload_file(
                     file_info['file_path'], parent_id,
                     self.is_shared_drive
                 )
+                
+                # Calculer la vitesse d'upload
+                upload_time = time.time() - start_time
+                file_speed = file_info['size'] / upload_time if upload_time > 0 else 0
+
+                # Mettre à jour le succès dans le transfer manager avec vitesse
+                if self.transfer_manager and self.transfer_id:
+                    self.transfer_manager.update_file_status_in_transfer(
+                        self.transfer_id, file_path, TransferStatus.COMPLETED, 100, "", file_speed
+                    )
+                    # Sauvegarder l'ID du fichier uploadé
+                    transfer = self.transfer_manager.get_transfer(self.transfer_id)
+                    if transfer and file_path in transfer.child_files:
+                        transfer.child_files[file_path].uploaded_file_id = file_id
+                        transfer.child_files[file_path].destination_folder_id = parent_id
 
                 return {
                     'success': True,
@@ -373,6 +428,12 @@ class SafeFolderUploadThread(QThread):
                 }
 
             except Exception as e:
+                # Mettre à jour l'erreur dans le transfer manager
+                if self.transfer_manager and self.transfer_id:
+                    self.transfer_manager.update_file_status_in_transfer(
+                        self.transfer_id, file_path, TransferStatus.ERROR, 0, str(e)
+                    )
+                
                 return {
                     'success': False,
                     'error': str(e),
@@ -389,37 +450,53 @@ class SafeFolderUploadThread(QThread):
                 result = upload_single_file_safe(file_info)
                 results.append(result)
 
-                # Mettre à jour le progrès
+                # Mettre à jour le progrès avec throttling
                 with QMutexLocker(self.progress_mutex):
                     if result['success']:
                         self.uploaded_files += 1
                     else:
                         self.failed_files += 1
 
-                    progress = int(((self.uploaded_files + self.failed_files) / self.total_files) * 100)
-                    self.progress_signal.emit(progress)
+                    # Throttling des updates de progrès pour éviter la surcharge UI (optimisé)
+                    current_time = time.time()
+                    # Pour de gros volumes, réduire la fréquence des mises à jour
+                    update_interval = 1.0 if self.total_files > 500 else 0.5
+                    should_update = (
+                        (current_time - getattr(self, 'last_progress_update', 0)) > update_interval or
+                        self.uploaded_files + self.failed_files == self.total_files  # Toujours update à la fin
+                    )
+                    
+                    if should_update:
+                        self.last_progress_update = current_time
+                        progress = int(((self.uploaded_files + self.failed_files) / self.total_files) * 100)
+                        self.progress_signal.emit(progress)
 
-                    # Mettre à jour le transfert
-                    if self.transfer_manager and self.transfer_id:
-                        elapsed_time = time.time() - self.start_time
-                        if elapsed_time > 0:
-                            avg_file_size = self.total_size / self.total_files if self.total_files > 0 else 0
-                            speed = ((self.uploaded_files + self.failed_files) * avg_file_size) / elapsed_time
-                            self.transfer_manager.update_transfer_progress(
-                                self.transfer_id, progress,
-                                int((self.uploaded_files + self.failed_files) * avg_file_size), speed
-                            )
+                        # Mettre à jour le transfert
+                        if self.transfer_manager and self.transfer_id:
+                            elapsed_time = time.time() - self.start_time
+                            if elapsed_time > 0:
+                                avg_file_size = self.total_size / self.total_files if self.total_files > 0 else 0
+                                speed = ((self.uploaded_files + self.failed_files) * avg_file_size) / elapsed_time
+                                self.transfer_manager.update_transfer_progress(
+                                    self.transfer_id, progress,
+                                    int((self.uploaded_files + self.failed_files) * avg_file_size), speed
+                                )
 
                 # Status
                 if result['success']:
-                    self.status_signal.emit(f"✅ Terminé: {result['file_info']['file_name']}")
+                    if result.get('skipped', False):
+                        self.status_signal.emit(f"⏭️ Ignoré (existe): {result['file_info']['file_name']}")
+                    else:
+                        self.status_signal.emit(f"✅ Terminé: {result['file_info']['file_name']}")
                 else:
                     if not result.get('cancelled', False):
                         self.status_signal.emit(f"❌ Erreur: {result['file_info']['file_name']}")
 
-                # Délai entre uploads pour éviter le rate limiting
+                # Délai entre uploads pour éviter le rate limiting (optimisé)
                 if not self.is_cancelled:
-                    time.sleep(0.001)  # 100ms entre chaque fichier
+                    # Délai adaptatif: plus court pour de gros volumes
+                    delay = 0.05 if self.total_files > 100 else 0.1
+                    time.sleep(delay)
         else:
             # Upload parallèle très limité et sécurisé
             with ThreadPoolExecutor(max_workers=self.max_parallel_uploads) as executor:
@@ -444,29 +521,41 @@ class SafeFolderUploadThread(QThread):
                     result = future.result()
                     results.append(result)
 
-                    # Mettre à jour le progrès (même code que séquentiel)
+                    # Mettre à jour le progrès avec throttling (même code que séquentiel)
                     with QMutexLocker(self.progress_mutex):
                         if result['success']:
                             self.uploaded_files += 1
                         else:
                             self.failed_files += 1
 
-                        progress = int(((self.uploaded_files + self.failed_files) / self.total_files) * 100)
-                        self.progress_signal.emit(progress)
+                        # Throttling des updates de progrès pour éviter la surcharge UI
+                        current_time = time.time()
+                        should_update = (
+                            (current_time - getattr(self, 'last_progress_update', 0)) > 0.2 or  # Max 5 updates par seconde (amélioré)
+                            self.uploaded_files + self.failed_files == self.total_files  # Toujours update à la fin
+                        )
+                        
+                        if should_update:
+                            self.last_progress_update = current_time
+                            progress = int(((self.uploaded_files + self.failed_files) / self.total_files) * 100)
+                            self.progress_signal.emit(progress)
 
-                        if self.transfer_manager and self.transfer_id:
-                            elapsed_time = time.time() - self.start_time
-                            if elapsed_time > 0:
-                                avg_file_size = self.total_size / self.total_files if self.total_files > 0 else 0
-                                speed = ((self.uploaded_files + self.failed_files) * avg_file_size) / elapsed_time
-                                self.transfer_manager.update_transfer_progress(
-                                    self.transfer_id, progress,
-                                    int((self.uploaded_files + self.failed_files) * avg_file_size), speed
-                                )
+                            if self.transfer_manager and self.transfer_id:
+                                elapsed_time = time.time() - self.start_time
+                                if elapsed_time > 0:
+                                    avg_file_size = self.total_size / self.total_files if self.total_files > 0 else 0
+                                    speed = ((self.uploaded_files + self.failed_files) * avg_file_size) / elapsed_time
+                                    self.transfer_manager.update_transfer_progress(
+                                        self.transfer_id, progress,
+                                        int((self.uploaded_files + self.failed_files) * avg_file_size), speed
+                                    )
 
                     # Status
                     if result['success']:
-                        self.status_signal.emit(f"✅ Terminé: {result['file_info']['file_name']}")
+                        if result.get('skipped', False):
+                            self.status_signal.emit(f"⏭️ Ignoré (existe): {result['file_info']['file_name']}")
+                        else:
+                            self.status_signal.emit(f"✅ Terminé: {result['file_info']['file_name']}")
                     else:
                         if not result.get('cancelled', False):
                             self.status_signal.emit(f"❌ Erreur: {result['file_info']['file_name']}")
@@ -584,6 +673,123 @@ class SafeFolderUploadThread(QThread):
             self.transfer_manager.update_transfer_status(
                 self.transfer_id, TransferStatus.CANCELLED
             )
+
+
+class RetryUploadThread(QThread):
+    """Thread spécialisé pour réessayer les fichiers échoués uniquement"""
+    
+    progress_signal = pyqtSignal(int)
+    completed_signal = pyqtSignal()
+    error_signal = pyqtSignal(str)
+    status_signal = pyqtSignal(str)
+    
+    def __init__(self, drive_client: GoogleDriveClient, transfer, retry_files: List, 
+                 transfer_manager: Optional[TransferManager] = None):
+        """
+        Initialise le thread de retry
+        
+        Args:
+            drive_client: Client Google Drive
+            transfer: TransferItem parent
+            retry_files: Liste des FileTransferItem à réessayer
+            transfer_manager: Gestionnaire de transferts
+        """
+        super().__init__()
+        self.drive_client = drive_client
+        self.transfer = transfer
+        self.retry_files = retry_files
+        self.transfer_manager = transfer_manager
+        self.is_cancelled = False
+        self.total_files = len(retry_files)
+        self.completed_files = 0
+        
+    def run(self) -> None:
+        """Exécute le retry des fichiers échoués"""
+        if not self.retry_files:
+            self.completed_signal.emit()
+            return
+            
+        self.status_signal.emit(f"🔄 Retry de {self.total_files} fichier(s)...")
+        
+        try:
+            # Construire le mapping des dossiers existants
+            folder_mapping = self._rebuild_folder_mapping()
+            
+            for i, file_item in enumerate(self.retry_files):
+                if self.is_cancelled:
+                    break
+                    
+                try:
+                    # Déterminer le dossier parent
+                    parent_id = folder_mapping.get(file_item.relative_path, self.transfer.destination_folder_id)
+                    if not parent_id:
+                        parent_id = self.transfer.destination_folder_id
+                    
+                    self.status_signal.emit(f"🔄 Retry: {file_item.file_name}")
+                    
+                    # Vérifier si le fichier existe déjà
+                    if already_exists_in_folder(SafeGoogleDriveUploader.get_fresh_client(), parent_id, file_item.file_name):
+                        # Marquer comme complété
+                        if self.transfer_manager:
+                            self.transfer_manager.update_file_status_in_transfer(
+                                self.transfer.transfer_id, file_item.file_path, TransferStatus.COMPLETED
+                            )
+                        file_item.exists_on_drive = True
+                        self.status_signal.emit(f"⏭️ Ignoré (existe): {file_item.file_name}")
+                    else:
+                        # Upload du fichier
+                        file_id = SafeGoogleDriveUploader.safe_upload_file(
+                            file_item.file_path, parent_id, False  # Assume non-shared drive
+                        )
+                        
+                        # Marquer comme réussi
+                        if self.transfer_manager:
+                            self.transfer_manager.update_file_status_in_transfer(
+                                self.transfer.transfer_id, file_item.file_path, TransferStatus.COMPLETED
+                            )
+                        file_item.uploaded_file_id = file_id
+                        file_item.destination_folder_id = parent_id
+                        self.status_signal.emit(f"✅ Retry réussi: {file_item.file_name}")
+                    
+                    self.completed_files += 1
+                    progress = int((self.completed_files / self.total_files) * 100)
+                    self.progress_signal.emit(progress)
+                    
+                except Exception as e:
+                    # Maintenir l'erreur
+                    if self.transfer_manager:
+                        self.transfer_manager.update_file_status_in_transfer(
+                            self.transfer.transfer_id, file_item.file_path, TransferStatus.ERROR, 0, str(e)
+                        )
+                    self.status_signal.emit(f"❌ Retry échoué: {file_item.file_name}")
+                    self.error_signal.emit(f"Retry échoué pour {file_item.file_name}: {str(e)}")
+                
+                # Petit délai entre les fichiers
+                time.sleep(0.1)
+                
+            if not self.is_cancelled:
+                self.status_signal.emit(f"🎉 Retry terminé: {self.completed_files}/{self.total_files}")
+                self.completed_signal.emit()
+                
+        except Exception as e:
+            self.error_signal.emit(f"Erreur durant le retry: {str(e)}")
+    
+    def _rebuild_folder_mapping(self) -> Dict[str, str]:
+        """Reconstruit le mapping des dossiers pour les fichiers en retry"""
+        # Pour l'instant, utiliser des valeurs par défaut
+        # Dans une implémentation plus avancée, on pourrait sauvegarder et restaurer le mapping
+        folder_mapping = {'': self.transfer.destination_folder_id}
+        
+        # Ajouter les dossiers parents connus des fichiers
+        for file_item in self.retry_files:
+            if file_item.destination_folder_id:
+                folder_mapping[file_item.relative_path] = file_item.destination_folder_id
+                
+        return folder_mapping
+    
+    def cancel(self) -> None:
+        """Annule le retry"""
+        self.is_cancelled = True
 
 
 # Alias pour maintenir la compatibilité
