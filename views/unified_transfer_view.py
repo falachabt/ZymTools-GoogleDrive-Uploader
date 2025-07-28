@@ -774,7 +774,13 @@ class UnifiedTransferView(QWidget):
     
     def _on_file_updated(self, unique_id: str):
         """Handle file status updated"""
-        pass  # Will be updated by timer
+        # Immediately update displays for better responsiveness
+        # This is particularly important for individual file status updates in folder view
+        try:
+            self._update_displays()
+        except Exception as e:
+            print(f"❌ Error in immediate file update: {e}")
+            # Don't crash, the timer will update eventually
     
     def _on_folder_added(self, folder_path: str):
         """Handle folder added to queue"""
@@ -782,7 +788,13 @@ class UnifiedTransferView(QWidget):
     
     def _on_folder_updated(self, folder_path: str):
         """Handle folder statistics updated"""
-        pass  # Will be updated by timer
+        # Immediately update folder view for better responsiveness
+        # This ensures folder status reflects individual file changes immediately
+        try:
+            self._update_folder_view()
+        except Exception as e:
+            print(f"❌ Error in immediate folder update: {e}")
+            # Don't crash, the timer will update eventually
     
     def _on_statistics_changed(self):
         """Handle queue statistics changed"""
