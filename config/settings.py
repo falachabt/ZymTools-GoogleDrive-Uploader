@@ -14,7 +14,7 @@ CACHE_MAX_AGE_MINUTES = 10
 CACHE_CLEANUP_INTERVAL_MS = 60000  # 1 minute
 
 # Paramètres d'interface
-WINDOW_TITLE = "ZymTools - Google Drive Explorer Stylé"
+WINDOW_TITLE = "ZymUpload"
 WINDOW_WIDTH = 1400
 WINDOW_HEIGHT = 900
 
@@ -89,3 +89,8 @@ def get_credentials_path():
 def get_token_path():
     """Retourne le chemin vers le fichier token.pickle"""
     return get_resource_path('resources/token.pickle')
+
+
+def get_appIcon_path():
+    """Retourne le chemin vers l'icône de l'application"""
+    return get_resource_path('resources/icon.png')

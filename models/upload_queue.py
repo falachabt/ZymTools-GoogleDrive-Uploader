@@ -400,10 +400,7 @@ class UploadQueue(QObject):
                 file.bytes_transferred = bytes_transferred
                 file.speed = speed
                 
-                # Update folder statistics immediately for this file's folder if status changed
-                if file.status == FileStatus.IN_PROGRESS:
-                    self._update_single_folder_statistics(file.source_folder)
-                
+
                 self.file_updated.emit(unique_id)
     
     def complete_file(self, unique_id: str, uploaded_file_id: str = ""):
@@ -415,9 +412,7 @@ class UploadQueue(QObject):
                 
                 self._transferred_size += file.file_size
                 
-                # Update folder statistics immediately for this file's folder
-                self._update_single_folder_statistics(file.source_folder)
-                
+
                 self.file_updated.emit(unique_id)
                 self.queue_statistics_changed.emit()
     
@@ -428,9 +423,7 @@ class UploadQueue(QObject):
                 file = self._files[unique_id]
                 file.fail_upload(error_message)
                 
-                # Update folder statistics immediately for this file's folder
-                self._update_single_folder_statistics(file.source_folder)
-                
+
                 self.file_updated.emit(unique_id)
                 self.queue_statistics_changed.emit()
     
@@ -444,9 +437,7 @@ class UploadQueue(QObject):
                 # Count as transferred for progress calculation
                 self._transferred_size += file.file_size
                 
-                # Update folder statistics immediately for this file's folder
-                self._update_single_folder_statistics(file.source_folder)
-                
+
                 self.file_updated.emit(unique_id)
                 self.queue_statistics_changed.emit()
     
