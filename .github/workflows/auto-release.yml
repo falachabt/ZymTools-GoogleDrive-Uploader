@@ -144,7 +144,7 @@ jobs:
           $pyinstallerArgs = @(
             "--onedir",
             "--windowed",
-            "--icon=resources/icon.ico",
+            "--icon=resources/assets/icons/icon.ico",
             "--hidden-import=googleapiclient.discovery",
             "--hidden-import=googleapiclient.http",
             "--hidden-import=google.auth.transport.requests",
