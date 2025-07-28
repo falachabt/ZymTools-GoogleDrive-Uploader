@@ -15,6 +15,7 @@ CACHE_CLEANUP_INTERVAL_MS = 60000  # 1 minute
 
 # Paramètres d'interface
 WINDOW_TITLE = "ZymUpload"
+APP_VERSION = "1.0.0"
 WINDOW_WIDTH = 1400
 WINDOW_HEIGHT = 900
 
@@ -93,4 +94,4 @@ def get_token_path():
 
 def get_appIcon_path():
     """Retourne le chemin vers l'icône de l'application"""
-    return get_resource_path('resources/icon.png')
+    return get_resource_path('resources/assets/icons/icon.ico')

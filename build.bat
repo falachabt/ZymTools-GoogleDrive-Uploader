@@ -25,6 +25,7 @@ echo 🚀 Compilation de l'application avec PyInstaller...
 "%PYTHON_EXE%" -m PyInstaller --onedir --windowed ^
   --paths="%ANACONDA_DLLS%" ^
   --paths="%ANACONDA_LIBS%" ^
+  --icon=resources\assets\icons\icon.ico ^
   --hidden-import=googleapiclient.discovery ^
   --hidden-import=googleapiclient.http ^
   --hidden-import=google.auth.transport.requests ^
@@ -46,15 +47,15 @@ echo 🚀 Compilation de l'application avec PyInstaller...
 REM ====== Copier les DLLs manquantes directement dans le répertoire dist ======
 echo 🔄 Copie des bibliothèques manquantes...
 if not exist "dist\main" mkdir "dist\main"
-copy "%ANACONDA_LIBS%\libexpat.dll" "dist\main\" >nul 2>&1
-copy "%ANACONDA_DLLS%\*.dll" "dist\main\" >nul 2>&1
-copy "%ANACONDA_LIBS%\*.dll" "dist\main\" >nul 2>&1
+copy "%ANACONDA_LIBS%\libexpat.dll" "dist\main\_internal\" >nul 2>&1
+copy "%ANACONDA_DLLS%\*.dll" "dist\main\_internal\" >nul 2>&1
+copy "%ANACONDA_LIBS%\*.dll" "dist\main\_internal\" >nul 2>&1
 
 
 REM ====== Création d'un raccourci sur le bureau ======
 echo 🔗 Création du raccourci sur le bureau...
 
-set SHORTCUT_NAME=ZymoSync.lnk
+set SHORTCUT_NAME=ZymUpload.lnk
 set EXE_PATH=%CD%\dist\main\main.exe
 set DESKTOP=%USERPROFILE%\Desktop
 

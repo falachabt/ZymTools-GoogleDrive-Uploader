@@ -4,10 +4,41 @@ Point d'entrée principal de l'application Google Drive Explorer
 
 import sys
 import traceback
+import logging
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from config.styles import apply_dark_theme, get_application_stylesheet
 from views.main_window import DriveExplorerMainWindow
+
+# Redirection simple de sys.stdout et sys.stderr vers debug.log (sans passer par logging)
+class LoggerWriter:
+    def __init__(self, filename):
+        self.terminal = sys.__stdout__
+        self.log = open(filename, "a", encoding="utf-8")
+    def write(self, message):
+        if self.terminal:
+            self.terminal.write(message)
+        if self.log:
+            self.log.write(message)
+            self.log.flush()
+    def flush(self):
+        if self.terminal:
+            self.terminal.flush()
+        if self.log:
+            self.log.flush()
+
+sys.stdout = LoggerWriter("debug.log")
+sys.stderr = LoggerWriter("debug.log")
+
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.__stdout__),  # Utiliser sys.__stdout__ pour éviter la boucle
+        logging.FileHandler('debug.log', encoding='utf-8')
+    ]
+)
 
 def setup_application():
     """Configure l'application Qt"""
@@ -75,11 +106,11 @@ def main():
         )
 
         if 'PyQt5' in str(e):
-            print("❌ PyQt5 n'est pas installé. Installez-le avec: pip install PyQt5")
+            logging.error("PyQt5 n'est pas installé. Installez-le avec: pip install PyQt5")
         elif 'google' in str(e):
-            print("❌ Google API Client n'est pas installé. Installez-le avec: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+            logging.error("Google API Client n'est pas installé. Installez-le avec: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
         else:
-            print(f"❌ Erreur d'import: {str(e)}")
+            logging.error(f"Erreur d'import: {str(e)}")
 
         # Essayer d'afficher une boîte de dialogue si possible
         try:
@@ -105,8 +136,8 @@ def main():
             app = QApplication(sys.argv) if not QApplication.instance() else QApplication.instance()
             show_error_dialog(error_msg, details)
         except:
-            print(f"❌ {error_msg}")
-            print(details)
+            logging.error(f"{error_msg}")
+            logging.error(details)
 
         return 1
 
@@ -119,12 +150,11 @@ def main():
             app = QApplication(sys.argv) if not QApplication.instance() else QApplication.instance()
             show_error_dialog(error_msg, details)
         except:
-            print(f"❌ {error_msg}")
-            print(f"Détails:\n{details}")
+            logging.error(f"{error_msg}")
+            logging.error(f"Détails:\n{details}")
 
         return 1
 
 if __name__ == "__main__":
     exit_code = main()
     sys.exit(exit_code)
-

@@ -13,10 +13,10 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QProgressBar, QLineEdit, QComboBox, QApplication,
                              QTabWidget)
 from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QKeySequence, QIcon
 
 from config.settings import (WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT,
-                             TOOLBAR_ICON_SIZE, CACHE_CLEANUP_INTERVAL_MS)
+                             TOOLBAR_ICON_SIZE, CACHE_CLEANUP_INTERVAL_MS, get_appIcon_path, APP_VERSION)
 from core.cache_manager import CacheManager
 from core.google_drive_client import GoogleDriveClient
 from threads import DownloadThread
@@ -37,13 +37,13 @@ class DriveExplorerMainWindow(QMainWindow):
     def __init__(self):
         """Initialise la fenêtre principale"""
         super().__init__()
+        self.setWindowIcon(QIcon(get_appIcon_path()))
+        # Configuration de la fenêtre avec version
+        self.setWindowTitle(f"{WINDOW_TITLE} v{APP_VERSION}")
+        self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
         # Initialiser les composants principaux
         self.setup_core_components()
-
-        # Configuration de la fenêtre
-        self.setWindowTitle(WINDOW_TITLE)
-        self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
         # Créer l'interface utilisateur
         self.setup_ui()
@@ -80,6 +80,12 @@ class DriveExplorerMainWindow(QMainWindow):
 
         # NEW: Unified Upload Manager (initialized in connect_to_drive)
         self.upload_manager = None
+
+        # Timer pour réessayer l'initialisation du gestionnaire d'upload si non disponible
+        self.upload_manager_retry_timer = QTimer()
+        self.upload_manager_retry_timer.setSingleShot(True)
+        self.upload_manager_retry_timer.timeout.connect(self._check_upload_manager)
+        self.upload_manager_retry_timer.start(2000)  # Premier essai après 5 secondes
 
         # Threads de chargement
         self.local_load_thread = None
@@ -121,6 +127,15 @@ class DriveExplorerMainWindow(QMainWindow):
                     files_per_worker=files_per_worker
                 )
                 self._connect_upload_manager_signals()
+
+                # Arrêter le timer de réinitialisation car le gestionnaire est maintenant disponible
+                if hasattr(self, 'upload_manager_retry_timer') and self.upload_manager_retry_timer.isActive():
+                    self.upload_manager_retry_timer.stop()
+
+                # Arrêter le timer de réinitialisation car le gestionnaire est maintenant disponible
+                if hasattr(self, 'upload_manager_retry_timer') and self.upload_manager_retry_timer.isActive():
+                    self.upload_manager_retry_timer.stop()
+
                 print(f"✅ Gestionnaire d'upload initialisé avec succès ({num_workers} workers, {files_per_worker} fichiers/worker)")
                 
             except ImportError as import_error:
@@ -489,33 +504,33 @@ class DriveExplorerMainWindow(QMainWindow):
         try:
             from views.dialogs import UploadConfigDialog
             from config.upload_config import upload_config_manager
-            
+
             # Get current configuration
             current_workers = upload_config_manager.get_num_workers()
             current_files_per_worker = upload_config_manager.get_files_per_worker()
-            
+
             print(f"📊 Current config: {current_workers} workers, {current_files_per_worker} files per worker")
-            
+
             # Open configuration dialog
             dialog = UploadConfigDialog(
                 current_workers=current_workers,
                 current_files_per_worker=current_files_per_worker,
                 parent=self
             )
-            
+
             if dialog.exec_() == dialog.Accepted:
                 # Get new configuration
                 num_workers, files_per_worker = dialog.get_workers_config()
-                
+
                 # Save configuration
                 success = upload_config_manager.update_workers_config(num_workers, files_per_worker)
-                
+
                 if success:
                     print(f"✅ New config saved: {num_workers} workers, {files_per_worker} files per worker")
-                    
+
                     # Try to reinitialize upload manager with new configuration
                     self._apply_new_upload_config(num_workers, files_per_worker)
-                    
+
                     # Show message to user
                     from PyQt5.QtWidgets import QMessageBox
                     QMessageBox.information(
@@ -534,20 +549,20 @@ class DriveExplorerMainWindow(QMainWindow):
                         "Erreur de configuration",
                         "Impossible de sauvegarder la configuration."
                     )
-            
+
         except Exception as e:
             print(f"❌ Error in upload configuration dialog: {e}")
             from views.dialogs import ErrorDialog
             ErrorDialog.show_error(
-                "❌ Erreur de configuration", 
-                f"Erreur lors de l'ouverture de la configuration: {str(e)}", 
+                "❌ Erreur de configuration",
+                f"Erreur lors de l'ouverture de la configuration: {str(e)}",
                 parent=self
             )
 
     def _apply_new_upload_config(self, num_workers: int, files_per_worker: int) -> None:
         """
         Apply new upload configuration to the current upload manager
-        
+
         Args:
             num_workers: New number of workers
             files_per_worker: New files per worker
@@ -556,32 +571,32 @@ class DriveExplorerMainWindow(QMainWindow):
             if not self.connected or not self.drive_client:
                 print("⚠️ Not connected to Google Drive, config will be applied on next connection")
                 return
-                
+
             # If upload manager exists, try to reconfigure it
             if self.upload_manager:
                 print(f"🔄 Reconfiguring upload manager: {num_workers} workers, {files_per_worker} files per worker")
-                
+
                 # Stop current session if running
                 self.upload_manager.stop_upload_session()
-                
+
                 # Reconfigure the upload manager
                 if hasattr(self.upload_manager, 'reconfigure'):
                     success = self.upload_manager.reconfigure(num_workers, files_per_worker)
                     if success:
                         print("✅ Upload manager reconfigured successfully")
-                        
+
                         # Update transfer panel if available
                         if hasattr(self, 'transfer_panel') and hasattr(self.transfer_panel, 'set_upload_manager'):
                             self.transfer_panel.set_upload_manager(self.upload_manager)
                         return
-                
+
                 # If reconfigure method doesn't exist, recreate the upload manager
                 print("🔄 Recreating upload manager with new configuration...")
                 try:
                     self.upload_manager.deleteLater()
                 except:
                     pass
-                    
+
                 # Create new upload manager
                 from models.unified_upload_manager import UnifiedUploadManager
                 self.upload_manager = UnifiedUploadManager(
@@ -590,13 +605,13 @@ class DriveExplorerMainWindow(QMainWindow):
                     files_per_worker=files_per_worker
                 )
                 self._connect_upload_manager_signals()
-                
+
                 # Update transfer panel
                 if hasattr(self, 'transfer_panel') and hasattr(self.transfer_panel, 'set_upload_manager'):
                     self.transfer_panel.set_upload_manager(self.upload_manager)
-                    
+
                 print("✅ Upload manager recreated with new configuration")
-                
+
             else:
                 # No upload manager exists, try to create one
                 print("🔄 Creating upload manager with new configuration...")
@@ -604,7 +619,7 @@ class DriveExplorerMainWindow(QMainWindow):
                     print("✅ Upload manager created with new configuration")
                 else:
                     print("❌ Failed to create upload manager with new configuration")
-                    
+
         except Exception as e:
             print(f"❌ Error applying new upload config: {e}")
             import traceback
@@ -639,6 +654,7 @@ class DriveExplorerMainWindow(QMainWindow):
             self.transfer_panel.clear_completed_requested.connect(self._clear_completed_files)
             self.transfer_panel.pause_requested.connect(self._pause_uploads)
             self.transfer_panel.resume_requested.connect(self._resume_uploads)
+            self.transfer_panel.config_changed.connect(self._on_upload_config_changed)
         else:
             print("⚠️ Transfer panel is not UnifiedTransferView, skipping signal connections")
 
@@ -1905,6 +1921,34 @@ class DriveExplorerMainWindow(QMainWindow):
         
         return error_widget
     
+    def _check_upload_manager(self):
+        """Vérifie et réessaie l'initialisation du gestionnaire d'upload si nécessaire"""
+        print("🔍 Vérification du gestionnaire d'upload...")
+
+        # Vérifier si le gestionnaire est déjà disponible
+        if self.upload_manager:
+            print("✅ Gestionnaire d'upload déjà disponible")
+            return
+
+        # Vérifier si on est connecté à Google Drive
+        if not self.connected or not self.drive_client:
+            print("⚠️ Pas de connexion Google Drive pour initialiser le gestionnaire d'upload")
+            # Programmer une nouvelle tentative dans 10 secondes
+            self.upload_manager_retry_timer.start(10000)
+            return
+
+        print("🔄 Tentative de réinitialisation du gestionnaire d'upload...")
+        success = self.retry_upload_manager_initialization()
+
+        if success:
+            print("✅ Gestionnaire d'upload initialisé avec succès")
+            # Mettre à jour l'onglet des transferts si nécessaire
+            self._update_transfer_tab()
+        else:
+            print("❌ Échec de l'initialisation du gestionnaire d'upload")
+            # Programmer une deuxième tentative après 15 secondes
+            self.upload_manager_retry_timer.start(15000)
+
     def reinitialize_upload_manager(self):
         """Reinitialize the upload manager after connection issues"""
         try:
@@ -2284,6 +2328,12 @@ class DriveExplorerMainWindow(QMainWindow):
         """Handle upload session resumed"""
         print("▶️ Session d'upload reprise")
     
+    def _on_upload_config_changed(self, num_workers: int, files_per_worker: int):
+        """Handle upload configuration change"""
+        print(f"⚙️ Configuration d'upload modifiée: {num_workers} workers, {files_per_worker} fichiers/worker")
+        # Configuration is already saved by the dialog,
+        # changes will be applied on next application restart
+
     # === LEGACY TRANSFER METHODS (to be updated/removed) ===
     
     def retry_failed_files(self, transfer_id: str = None) -> None:

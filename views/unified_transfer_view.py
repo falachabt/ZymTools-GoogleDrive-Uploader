@@ -41,6 +41,7 @@ class UnifiedTransferView(QWidget):
         super().__init__()
         
         # Handle case where upload_manager is None
+        self.config_changed = None
         self.upload_manager = upload_manager
         self.upload_queue = None
         
@@ -320,7 +321,7 @@ class UnifiedTransferView(QWidget):
             self.stats_label.setText("Aucun gestionnaire d'upload")
             self.speed_label.setText("0 B/s")
             self.workers_label.setText("0/0 workers (0 actifs)")
-            self.pause_resume_btn.setText("🚀 Démarrer")
+            self.pause_resume_btn.setText(" Démarrer")
             return
         
         try:
@@ -361,7 +362,7 @@ class UnifiedTransferView(QWidget):
             elif hasattr(self.upload_manager, 'is_active') and self.upload_manager.is_active():
                 self.pause_resume_btn.setText("⏸️ Pause")
             else:
-                self.pause_resume_btn.setText("🚀 Démarrer")
+                self.pause_resume_btn.setText(" Démarrer")
                 
         except Exception as e:
             print(f"❌ Error updating statistics: {e}")
