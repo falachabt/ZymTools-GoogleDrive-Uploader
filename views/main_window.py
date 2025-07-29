@@ -178,7 +178,7 @@ class DriveExplorerMainWindow(QMainWindow):
 
         # Connexion du signal de conflit de dossier si le scanner existe
         if hasattr(self.upload_manager, 'scanner') and self.upload_manager.scanner:
-            print("[MainWindow] Connexion signal conflit dossier (scanner principal)")
+            print("[MainWindow] Connexion du signal de conflit de dossier (scanner principal)")
             self.upload_manager.scanner.request_folder_conflict_decision.connect(self.handle_folder_conflict)
         # Connexion pour tous les FolderScanner créés dynamiquement (ex: add_folder)
         if hasattr(self.upload_manager, 'get_active_scanners'):
