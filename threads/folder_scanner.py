@@ -118,9 +118,16 @@ class FolderScanner(QThread):
         total_items = 0
         processed_items = 0
 
-        # First pass: count total items for progress
+        # First pass: count total items for progress (EXCLUDE .tif files from count)
         for root, dirs, files in os.walk(root_path):
-            total_items += len(dirs) + len(files)
+            # Count directories
+            total_items += len(dirs)
+            # Count files but EXCLUDE .tif files
+            for file_name in files:
+                if not file_name.lower().endswith('.tif'):
+                    total_items += 1
+
+        print(f"📊 Total items to process (excluding .tif): {total_items}")
 
         # Second pass: collect structure and files
         for root, dirs, files in os.walk(root_path):
@@ -140,6 +147,11 @@ class FolderScanner(QThread):
             for file_name in files:
                 if self._should_stop:
                     break
+
+                # EXCLUDE .tif files completely
+                if file_name.lower().endswith('.tif'):
+                    print(f"⏭️ Skipping .tif file: {file_name}")
+                    continue
 
                 file_path = os.path.join(root, file_name)
 
@@ -170,7 +182,70 @@ class FolderScanner(QThread):
             processed_items += len(dirs)
             self.scanning_progress.emit(root_path, processed_items, total_items)
 
+        print(f"📊 Files collected (excluding .tif): {len(all_files)}")
         return folder_structure, all_files
+
+    def _add_files_to_queue(self, all_files: List[Dict[str, str]],
+                          folder_mapping: Dict[str, str]) -> int:
+        """
+        Add files to upload queue in batches
+
+        Args:
+            all_files: List of file info dictionaries (already filtered, no .tif files)
+            folder_mapping: Dict mapping relative paths to Drive folder IDs
+
+        Returns:
+            Number of files added to queue
+        """
+        files_added = 0
+        batch = []
+
+        print(f"📋 Adding {len(all_files)} files to queue (no .tif files should be present)")
+
+        for file_info in all_files:
+            if self._should_stop:
+                break
+
+            # Double-check: This should not be necessary since .tif files are already filtered
+            # but keeping as safety check
+            if file_info['file_name'].lower().endswith('.tif'):
+                print(f"⚠️ WARNING: .tif file found in queue: {file_info['file_name']} - This should not happen!")
+                continue
+
+            # Get destination folder ID
+            rel_path = file_info['relative_path']
+            destination_folder_id = folder_mapping.get(rel_path, folder_mapping[''])
+
+            # Create QueuedFile
+            queued_file = QueuedFile(
+                file_path=file_info['file_path'],
+                file_name=file_info['file_name'],
+                file_size=file_info['file_size'],
+                source_folder=file_info['source_folder'],
+                relative_path=rel_path,
+                destination_folder_id=destination_folder_id
+            )
+
+            batch.append(queued_file)
+
+            # Process batch when it reaches batch_size
+            if len(batch) >= self._batch_size:
+                added_count = self.upload_queue.add_files_batch(batch)
+                files_added += added_count
+                self.files_added.emit(self.folder_path, added_count)
+                batch = []
+
+                # Small delay between batches
+                time.sleep(0.01)
+
+        # Process remaining files in batch
+        if batch and not self._should_stop:
+            added_count = self.upload_queue.add_files_batch(batch)
+            files_added += added_count
+            self.files_added.emit(self.folder_path, added_count)
+
+        print(f"📊 Total files added to queue: {files_added}")
+        return files_added
 
     def _get_user_folder_conflict_decision(self, folder_name: str, parent_path: str) -> str:
         """
@@ -321,6 +396,10 @@ class FolderScanner(QThread):
         for file_info in all_files:
             if self._should_stop:
                 break
+
+            # do not includes .tif files
+            #if file_info['file_name'].lower().endswith('.tif'):
+            #    continue
 
             # Get destination folder ID
             rel_path = file_info['relative_path']
