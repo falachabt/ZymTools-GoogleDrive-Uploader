@@ -283,7 +283,7 @@ class SafeFolderUploadThread(QThread):
                                 'size': os.path.getsize(file_path)
                             }
                             files_to_process.append(file_info)
-                            
+
                             # Créer un FileTransferItem et l'ajouter au transfert
                             if self.transfer_manager and self.transfer_id:
                                 from models.transfer_models import FileTransferItem
@@ -295,16 +295,17 @@ class SafeFolderUploadThread(QThread):
                                     destination_folder_id=""  # Sera mis à jour plus tard
                                 )
                                 self.transfer_manager.add_file_to_transfer(self.transfer_id, file_item)
-                                
+
         except Exception as e:
             print(f"Erreur lors de la collecte des fichiers: {e}")
 
         return files_to_process
 
     def create_folder_structure_safe(self, folder_path: str, parent_id: str) -> Dict[str, str]:
-        """Crée la structure de dossiers de manière sécurisée"""
+        """Crée la structure de dossiers de manière sécurisée avec gestion des conflits"""
         folder_mapping = {'': parent_id}
-        
+        retry_count = 3
+
         try:
             # Créer les dossiers un par un avec délais
             for root, dirs, files in os.walk(folder_path):
@@ -323,28 +324,67 @@ class SafeFolderUploadThread(QThread):
 
                     self.status_signal.emit(f"📁 Création: {rel_path}")
 
-                    # Retry pour la création de dossiers
-                    for attempt in range(3):
+                    # Vérifier si le dossier existe déjà
+                    folder_id = None
+                    try:
+                        fresh_client = self.get_fresh_client()
                         try:
-                            # Ajoutez ce type d’appel à chaque opération Drive pour isolation SSL :
-                            fresh_client = self.get_fresh_client()
-                            try:
-                                # Utilisez ensuite fresh_client pour vos opérations Google Drive (création de dossier, etc.)
-                                folder_id = fresh_client.create_folder(
-                                    folder_name, parent_drive_id, self.is_shared_drive
-                                )
-                            finally:
-                                fresh_client.close()
-                            folder_mapping[rel_path] = folder_id
-                            break
-                        except Exception as e:
-                            if attempt < 2:
-                                time.sleep(1 + attempt)  # Délai progressif
-                                continue
-                            else:
-                                raise e
+                            existing_folders = fresh_client.find_folder_by_name_in_parent(parent_drive_id, folder_name)
+                            if existing_folders:
+                                # Vérifier la configuration utilisateur
+                                from config.upload_config import upload_config_manager
+                                use_existing = upload_config_manager.get_use_existing_folders()
 
-                    # Petit délai entre créations de dossiers
+                                if use_existing:
+                                    # Utiliser le dossier existant selon la configuration
+                                    folder_id = existing_folders[0]['id']
+                                    self.status_signal.emit(f"📁 Utilisation du dossier existant: {rel_path}")
+                                else:
+                                    # Créer un nouveau dossier selon la configuration
+                                    folder_id = None
+                                    self.status_signal.emit(f"📁 Création d'un nouveau dossier (même nom): {rel_path}")
+                            else:
+                                # Le dossier n'existe pas, on va le créer
+                                folder_id = None
+                        finally:
+                            fresh_client.close()
+                    except Exception as e:
+                        # En cas d'erreur lors de la vérification, on continue avec la création
+                        self.status_signal.emit(f"⚠️ Erreur lors de la vérification du dossier: {str(e)}")
+                        folder_id = None
+
+                    # Si le dossier n'existe pas, on le crée avec retry
+                    if not folder_id:
+                        creation_success = False
+                        for attempt in range(retry_count):
+                            try:
+                                fresh_client = self.get_fresh_client()
+                                try:
+                                    folder_id = fresh_client.create_folder(
+                                        folder_name, parent_drive_id, self.is_shared_drive
+                                    )
+                                    creation_success = True
+                                finally:
+                                    fresh_client.close()
+                                break
+                            except Exception as e:
+                                self.status_signal.emit(f"⚠️ Retry {attempt+1}/{retry_count} - Erreur création dossier '{folder_name}': {str(e)}")
+                                if attempt < retry_count - 1:
+                                    time.sleep(1 + attempt)  # Délai progressif
+                                    continue
+                                else:
+                                    # Toutes les tentatives ont échoué
+                                    raise Exception(f"Échec de création du dossier '{folder_name}' après {retry_count} tentatives: {e}")
+
+                    # Si on a un ID de dossier valide, on l'ajoute au mapping
+                    if folder_id:
+                        folder_mapping[rel_path] = folder_id
+                    else:
+                        # Fallback au dossier parent si quelque chose s'est mal passé
+                        folder_mapping[rel_path] = parent_drive_id
+                        self.status_signal.emit(f"⚠️ Utilisation du dossier parent comme fallback pour '{folder_name}'")
+
+                    # Petit délai entre créations de dossiers pour éviter les limitations de taux
                     time.sleep(0.2)
 
         except Exception as e:
@@ -378,7 +418,7 @@ class SafeFolderUploadThread(QThread):
                     self.transfer_manager.update_file_status_in_transfer(
                         self.transfer_id, file_path, TransferStatus.IN_PROGRESS
                     )
-                
+
                 # Tracking du temps pour calculer la vitesse
                 start_time = time.time()
 
@@ -392,7 +432,7 @@ class SafeFolderUploadThread(QThread):
                         transfer = self.transfer_manager.get_transfer(self.transfer_id)
                         if transfer and file_path in transfer.child_files:
                             transfer.child_files[file_path].exists_on_drive = True
-                    
+
                     return {
                         'success': True,
                         'file_id': 'existing',
@@ -405,7 +445,7 @@ class SafeFolderUploadThread(QThread):
                     file_info['file_path'], parent_id,
                     self.is_shared_drive
                 )
-                
+
                 # Calculer la vitesse d'upload
                 upload_time = time.time() - start_time
                 file_speed = file_info['size'] / upload_time if upload_time > 0 else 0
@@ -433,7 +473,7 @@ class SafeFolderUploadThread(QThread):
                     self.transfer_manager.update_file_status_in_transfer(
                         self.transfer_id, file_path, TransferStatus.ERROR, 0, str(e)
                     )
-                
+
                 return {
                     'success': False,
                     'error': str(e),
@@ -465,7 +505,7 @@ class SafeFolderUploadThread(QThread):
                         (current_time - getattr(self, 'last_progress_update', 0)) > update_interval or
                         self.uploaded_files + self.failed_files == self.total_files  # Toujours update à la fin
                     )
-                    
+
                     if should_update:
                         self.last_progress_update = current_time
                         progress = int(((self.uploaded_files + self.failed_files) / self.total_files) * 100)
@@ -534,7 +574,7 @@ class SafeFolderUploadThread(QThread):
                             (current_time - getattr(self, 'last_progress_update', 0)) > 0.2 or  # Max 5 updates par seconde (amélioré)
                             self.uploaded_files + self.failed_files == self.total_files  # Toujours update à la fin
                         )
-                        
+
                         if should_update:
                             self.last_progress_update = current_time
                             progress = int(((self.uploaded_files + self.failed_files) / self.total_files) * 100)
@@ -677,17 +717,17 @@ class SafeFolderUploadThread(QThread):
 
 class RetryUploadThread(QThread):
     """Thread spécialisé pour réessayer les fichiers échoués uniquement"""
-    
+
     progress_signal = pyqtSignal(int)
     completed_signal = pyqtSignal()
     error_signal = pyqtSignal(str)
     status_signal = pyqtSignal(str)
-    
+
     def __init__(self, drive_client: GoogleDriveClient, transfer, retry_files: List, 
                  transfer_manager: Optional[TransferManager] = None):
         """
         Initialise le thread de retry
-        
+
         Args:
             drive_client: Client Google Drive
             transfer: TransferItem parent
@@ -702,31 +742,31 @@ class RetryUploadThread(QThread):
         self.is_cancelled = False
         self.total_files = len(retry_files)
         self.completed_files = 0
-        
+
     def run(self) -> None:
         """Exécute le retry des fichiers échoués"""
         if not self.retry_files:
             self.completed_signal.emit()
             return
-            
+
         self.status_signal.emit(f"🔄 Retry de {self.total_files} fichier(s)...")
-        
+
         try:
             # Construire le mapping des dossiers existants
             folder_mapping = self._rebuild_folder_mapping()
-            
+
             for i, file_item in enumerate(self.retry_files):
                 if self.is_cancelled:
                     break
-                    
+
                 try:
                     # Déterminer le dossier parent
                     parent_id = folder_mapping.get(file_item.relative_path, self.transfer.destination_folder_id)
                     if not parent_id:
                         parent_id = self.transfer.destination_folder_id
-                    
+
                     self.status_signal.emit(f"🔄 Retry: {file_item.file_name}")
-                    
+
                     # Vérifier si le fichier existe déjà
                     if already_exists_in_folder(SafeGoogleDriveUploader.get_fresh_client(), parent_id, file_item.file_name):
                         # Marquer comme complété
@@ -741,7 +781,7 @@ class RetryUploadThread(QThread):
                         file_id = SafeGoogleDriveUploader.safe_upload_file(
                             file_item.file_path, parent_id, False  # Assume non-shared drive
                         )
-                        
+
                         # Marquer comme réussi
                         if self.transfer_manager:
                             self.transfer_manager.update_file_status_in_transfer(
@@ -750,11 +790,11 @@ class RetryUploadThread(QThread):
                         file_item.uploaded_file_id = file_id
                         file_item.destination_folder_id = parent_id
                         self.status_signal.emit(f"✅ Retry réussi: {file_item.file_name}")
-                    
+
                     self.completed_files += 1
                     progress = int((self.completed_files / self.total_files) * 100)
                     self.progress_signal.emit(progress)
-                    
+
                 except Exception as e:
                     # Maintenir l'erreur
                     if self.transfer_manager:
@@ -763,30 +803,30 @@ class RetryUploadThread(QThread):
                         )
                     self.status_signal.emit(f"❌ Retry échoué: {file_item.file_name}")
                     self.error_signal.emit(f"Retry échoué pour {file_item.file_name}: {str(e)}")
-                
+
                 # Petit délai entre les fichiers
                 time.sleep(0.1)
-                
+
             if not self.is_cancelled:
                 self.status_signal.emit(f"🎉 Retry terminé: {self.completed_files}/{self.total_files}")
                 self.completed_signal.emit()
-                
+
         except Exception as e:
             self.error_signal.emit(f"Erreur durant le retry: {str(e)}")
-    
+
     def _rebuild_folder_mapping(self) -> Dict[str, str]:
         """Reconstruit le mapping des dossiers pour les fichiers en retry"""
         # Pour l'instant, utiliser des valeurs par défaut
         # Dans une implémentation plus avancée, on pourrait sauvegarder et restaurer le mapping
         folder_mapping = {'': self.transfer.destination_folder_id}
-        
+
         # Ajouter les dossiers parents connus des fichiers
         for file_item in self.retry_files:
             if file_item.destination_folder_id:
                 folder_mapping[file_item.relative_path] = file_item.destination_folder_id
-                
+
         return folder_mapping
-    
+
     def cancel(self) -> None:
         """Annule le retry"""
         self.is_cancelled = True

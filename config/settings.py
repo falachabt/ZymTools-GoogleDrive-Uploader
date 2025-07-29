@@ -15,7 +15,7 @@ CACHE_CLEANUP_INTERVAL_MS = 60000  # 1 minute
 
 # Paramètres d'interface
 WINDOW_TITLE = "ZymUpload"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.3"
 WINDOW_WIDTH = 1400
 WINDOW_HEIGHT = 900
 
