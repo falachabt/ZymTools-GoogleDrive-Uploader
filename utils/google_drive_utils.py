@@ -191,8 +191,17 @@ def already_exists_in_folder(drive_client: GoogleDriveClient, parent_id: str, na
 
 def clear_duplicate_tracking():
     """
-    Nettoie complètement le tracking des doublons.
-    À appeler au début d'une nouvelle session d'upload.
+    Clears all duplicate tracking data from the global tracker.
+
+    This function should be called at the start of a new upload session to reset
+    the tracking state. It removes all records of files currently being uploaded
+    and files that have been uploaded in the current session.
+
+    Side Effects:
+        - Resets the global duplicate tracker, `_global_duplicate_tracker`.
+        - Any ongoing or completed upload tracking will be lost.
+        - Should not be called during an active upload process, as it may lead
+          to inconsistent states or duplicate uploads.
     """
     global _global_duplicate_tracker
     _global_duplicate_tracker.clear_all()
