@@ -476,3 +476,40 @@ class GoogleDriveClient:
         Ferme le client Google Drive
         """
         self.service.close()
+
+    def find_folder_by_name_in_parent(self, parent_id: str, folder_name: str) -> List[Dict[str, Any]]:
+        """
+        Recherche les dossiers portant un nom donné dans un dossier parent.
+
+        Args:
+            parent_id: ID du dossier parent
+            folder_name: Nom du dossier à rechercher
+        Returns:
+            Liste des dossiers trouvés (peut être vide)
+        """
+        try:
+            # Utiliser un client dédié pour la recherche
+            search_client = GoogleDriveClient()
+            try:
+                query = (
+                    f"'{parent_id}' in parents and "
+                    f"mimeType = 'application/vnd.google-apps.folder' and "
+                    f"trashed = false"
+                )
+                results = search_client.service.files().list(
+                    q=query,
+                    spaces='drive',
+                    fields='files(id, name)',
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True
+                ).execute()
+                folders = results.get('files', [])
+                # Comparer côté Python pour éviter les soucis de recherche
+                return [f for f in folders if f.get('name', '') == folder_name]
+            finally:
+                # Fermer le client dédié à la recherche
+                if hasattr(search_client, 'close'):
+                    search_client.close()
+        except Exception as e:
+            print(f"Erreur lors de la recherche de dossier: {e}")
+            return []

@@ -377,47 +377,50 @@ class ProgressDialog(QDialog):
 class UploadConfigDialog(QDialog):
     """Boîte de dialogue pour configurer les paramètres d'upload"""
 
-    def __init__(self, current_workers: int = 2, current_files_per_worker: int = 5, parent=None):
+    def __init__(self, current_workers: int = 2, current_files_per_worker: int = 5, 
+                 use_existing_folders: bool = True, parent=None):
         """
         Initialise la boîte de dialogue de configuration d'upload
 
         Args:
             current_workers: Nombre actuel de workers
             current_files_per_worker: Nombre actuel de fichiers par worker
+            use_existing_folders: Utiliser les dossiers existants en cas de conflit
             parent: Widget parent
         """
         super().__init__(parent)
-        self.setWindowTitle("⚙️ Configuration d'Upload")
+        self.setWindowTitle("Configuration d'Upload")
         self.setModal(True)
         # self.setFixedSize(450, 300)
 
         self.setSizeGripEnabled(True)
-        
+
         self.current_workers = current_workers
         self.current_files_per_worker = current_files_per_worker
-        
+        self.use_existing_folders = use_existing_folders
+
         self.setup_ui()
 
     def setup_ui(self) -> None:
         """Configure l'interface utilisateur"""
-        from PyQt5.QtWidgets import QSpinBox, QGroupBox
+        from PyQt5.QtWidgets import QSpinBox, QGroupBox, QCheckBox
         from config.settings import (MIN_NUM_WORKERS, MAX_NUM_WORKERS, 
                                     MIN_FILES_PER_WORKER, MAX_FILES_PER_WORKER)
-        
+
         layout = QVBoxLayout()
 
         # Titre et description
-        title_label = QLabel("⚙️ Configuration du Système d'Upload")
+        title_label = QLabel("Configuration du Système d'Upload")
         title_label.setStyleSheet("font-size: 14px; font-weight: bold; margin-bottom: 10px;")
         layout.addWidget(title_label)
-        
-        desc_label = QLabel("Configurez le nombre de workers et de fichiers par worker pour optimiser les performances d'upload.")
+
+        desc_label = QLabel("Configurez les paramètres d'upload et de gestion des dossiers.")
         desc_label.setWordWrap(True)
         desc_label.setStyleSheet("color: #666; margin-bottom: 15px;")
         layout.addWidget(desc_label)
 
         # Groupe de configuration des workers
-        workers_group = QGroupBox("👥 Configuration des Workers")
+        workers_group = QGroupBox("Configuration des Workers")
         workers_layout = QFormLayout()
 
         # Nombre de workers
@@ -440,7 +443,7 @@ class UploadConfigDialog(QDialog):
         layout.addWidget(workers_group)
 
         # Groupe d'informations calculées
-        info_group = QGroupBox("📊 Informations Calculées")
+        info_group = QGroupBox("Informations Calculées")
         info_layout = QFormLayout()
 
         self.total_parallel_label = QLabel()
@@ -448,16 +451,37 @@ class UploadConfigDialog(QDialog):
 
         self.recommendation_label = QLabel()
         info_layout.addRow("Recommandation:", self.recommendation_label)
-        
+
         # Update labels after both are created
         self._update_total_parallel()
 
         info_group.setLayout(info_layout)
         layout.addWidget(info_group)
 
+        # Groupe de configuration des dossiers
+        folders_group = QGroupBox("📁 Gestion des Dossiers")
+        folders_layout = QVBoxLayout()
+
+        # Checkbox pour utiliser les dossiers existants
+        self.use_existing_folders_checkbox = QCheckBox("Utiliser les dossiers existants en cas de conflit")
+        self.use_existing_folders_checkbox.setChecked(self.use_existing_folders)
+        self.use_existing_folders_checkbox.setToolTip("Si coché, les dossiers existants seront utilisés au lieu d'en créer de nouveaux")
+        folders_layout.addWidget(self.use_existing_folders_checkbox)
+
+        # Explication du comportement
+        folder_explanation = QLabel(
+            "• Si coché: Utilise les dossiers existants quand ils sont trouvés\n"
+            "• Si non coché: Crée de nouveaux dossiers même si un dossier du même nom existe déjà"
+        )
+        folder_explanation.setStyleSheet("color: #666; margin-top: 5px;")
+        folders_layout.addWidget(folder_explanation)
+
+        folders_group.setLayout(folders_layout)
+        layout.addWidget(folders_group)
+
         # Explication
         explanation_label = QLabel(
-            "💡 <b>Conseils:</b><br>"
+            "<b>Conseils:</b><br>"
             "• Plus de workers = plus de parallélisme mais plus de ressources CPU/RAM<br>"
             "• Plus de fichiers par worker = plus d'uploads simultanés<br>"
             "• Valeurs recommandées: 2-3 workers avec 5-10 fichiers par worker<br>"
@@ -469,18 +493,18 @@ class UploadConfigDialog(QDialog):
 
         # Boutons
         button_layout = QHBoxLayout()
-        
+
         reset_button = QPushButton("🔄 Réinitialiser")
         reset_button.clicked.connect(self._reset_to_defaults)
         button_layout.addWidget(reset_button)
-        
+
         button_layout.addStretch()
-        
+
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         button_layout.addWidget(button_box)
-        
+
         layout.addLayout(button_layout)
 
         self.setLayout(layout)
@@ -489,7 +513,7 @@ class UploadConfigDialog(QDialog):
         """Met à jour le calcul du nombre total d'uploads parallèles"""
         total = self.workers_spinbox.value() * self.files_per_worker_spinbox.value()
         self.total_parallel_label.setText(f"<b>{total}</b> fichiers simultanés")
-        
+
         # Couleur basée sur la charge
         if total <= 5:
             color = "green"
@@ -497,14 +521,14 @@ class UploadConfigDialog(QDialog):
             color = "orange"
         else:
             color = "red"
-        
+
         self.total_parallel_label.setStyleSheet(f"color: {color}; font-weight: bold;")
         self._update_recommendation()
 
     def _update_recommendation(self) -> None:
         """Met à jour la recommandation basée sur les valeurs actuelles"""
         total = self.workers_spinbox.value() * self.files_per_worker_spinbox.value()
-        
+
         if total <= 5:
             recommendation = "💚 Léger - Idéal pour préserver les ressources"
         elif total <= 10:
@@ -513,15 +537,16 @@ class UploadConfigDialog(QDialog):
             recommendation = "🟠 Intense - Bonnes performances, ressources élevées"
         else:
             recommendation = "🔴 Maximum - Performances maximales, très gourmand"
-            
+
         self.recommendation_label.setText(recommendation)
 
     def _reset_to_defaults(self) -> None:
         """Remet les valeurs par défaut"""
         from config.settings import DEFAULT_NUM_WORKERS, DEFAULT_FILES_PER_WORKER
-        
+
         self.workers_spinbox.setValue(DEFAULT_NUM_WORKERS)
         self.files_per_worker_spinbox.setValue(DEFAULT_FILES_PER_WORKER)
+        self.use_existing_folders_checkbox.setChecked(True)  # Valeur par défaut: utiliser les dossiers existants
 
     def get_workers_config(self) -> tuple:
         """
@@ -531,3 +556,55 @@ class UploadConfigDialog(QDialog):
             Tuple (num_workers, files_per_worker)
         """
         return (self.workers_spinbox.value(), self.files_per_worker_spinbox.value())
+
+    def get_use_existing_folders(self) -> bool:
+        """
+        Récupère la configuration de gestion des dossiers
+
+        Returns:
+            True si les dossiers existants doivent être utilisés, False sinon
+        """
+        return self.use_existing_folders_checkbox.isChecked()
+
+
+class FolderExistsDialog(QDialog):
+    """Boîte de dialogue pour conflit de dossier sur Google Drive"""
+    def __init__(self, folder_name: str, parent=None):
+        super().__init__(parent)
+        print(f"[FolderExistsDialog] Ouverture du dialog pour '{folder_name}'")
+        self.setWindowTitle("Dossier déjà existant")
+        self.setModal(True)
+        self.choice = None
+        self.setup_ui(folder_name)
+
+    def setup_ui(self, folder_name: str):
+        layout = QVBoxLayout()
+        label = QLabel(f"Un dossier nommé <b>{folder_name}</b> existe déjà à la destination.\nQue souhaitez-vous faire ?")
+        layout.addWidget(label)
+
+        btn_use = QPushButton("Utiliser le dossier existant")
+        btn_create = QPushButton("Créer un nouveau dossier (même nom)")
+        btn_cancel = QPushButton("Annuler")
+
+        btn_use.clicked.connect(self.use_existing)
+        btn_create.clicked.connect(self.create_new)
+        btn_cancel.clicked.connect(self.cancel)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(btn_use)
+        btn_layout.addWidget(btn_create)
+        btn_layout.addWidget(btn_cancel)
+        layout.addLayout(btn_layout)
+        self.setLayout(layout)
+
+    def use_existing(self):
+        self.choice = 'use_existing'
+        self.accept()
+
+    def create_new(self):
+        self.choice = 'create_new'
+        self.accept()
+
+    def cancel(self):
+        self.choice = 'cancel'
+        self.reject()
