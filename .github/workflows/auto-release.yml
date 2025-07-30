@@ -18,7 +18,7 @@ permissions:
   actions: read
 
 env:
-  APP_NAME: "ZymoUpload"
+  APP_NAME: "ZymUpload"
   PYTHON_VERSION: "3.9"
   # ID du dossier Google Drive cible
   GDRIVE_FOLDER_ID: "1EMQfuyMNHNc3170KXiSbyalx9HbQX5SN"

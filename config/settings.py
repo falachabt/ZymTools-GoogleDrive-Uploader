@@ -94,4 +94,4 @@ def get_token_path():
 
 def get_appIcon_path():
     """Retourne le chemin vers l'icône de l'application"""
-    return get_resource_path('resources/assets/icons/icon.ico')
+    return get_resource_path('resources/assets/icons/icon.png')
