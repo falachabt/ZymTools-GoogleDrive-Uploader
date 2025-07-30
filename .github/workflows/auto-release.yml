@@ -224,24 +224,21 @@ jobs:
 
         # Créer un README pour le ZIP
         $readmeContent = @"
-        # 🚀 $AppName v$VERSION - PRÊT À UTILISER
+        # $AppName v$VERSION 
         
-        ## ✅ Installation Immédiate
+        ## ✅ Installation 
         
         1. **Extraire** ce ZIP dans un dossier de votre choix
         2. **Lancer** $AppName.exe
         3. **Autoriser** l'accès Google Drive au premier lancement
         4. **C'est tout !** L'application est prête à utiliser
         
-        ## 🔑 Credentials Inclus
-        
-        Cette version inclut vos credentials Google Drive API personnels.
-        Aucune configuration supplémentaire n'est nécessaire.
         
         ## 🆘 Support
         
         - Documentation: https://github.com/${{ github.repository }}
         - Issues: https://github.com/${{ github.repository }}/issues
+        - Contact: [ benny.tenezeu@zymoptiq.com ]
         
         ---
         Build privé généré automatiquement le $(Get-Date -Format "yyyy-MM-dd HH:mm")
@@ -280,35 +277,14 @@ jobs:
 
         # Créer le changelog dans un fichier temporaire pour éviter les problèmes d'échappement
         cat > changelog.md << 'EOF'
-        ## 🚀 ZymoSync $VERSION - Build Privé
+        ##  ZymoSync $VERSION 
 
-        📅 **Date**: $(date '+%Y-%m-%d %H:%M:%S')
-        🔐 **Type**: Build privé avec credentials intégrés
-
-        ### ✅ Prêt à Utiliser Immédiatement
-
-        Cette version inclut vos credentials Google Drive API personnels.
-        Aucune configuration supplémentaire n'est requise!
-
-        ### 🚀 Installation Ultra-Simple
+        ### Installation 
 
         1. **Téléchargez** le ZIP ci-dessous
         2. **Extrayez** dans un dossier de votre choix
         3. **Double-cliquez** sur ZymoSync.exe
         4. **Autorisez** Google Drive au premier lancement
-        5. **Enjoy!** 🎉
-
-        ### 📦 Détails Techniques
-
-        - **Plateforme**: Windows x64
-        - **Python**: 3.9
-        - **PyQt5**: Inclus
-        - **Credentials**: Intégrés (prêt à utiliser)
-
-        ### 🔒 Sécurité
-
-        Ce build privé contient vos credentials personnels Google Drive.
-        Ne partagez pas ce fichier avec d'autres personnes.
 
         ---
 
